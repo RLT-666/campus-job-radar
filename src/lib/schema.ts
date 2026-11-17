@@ -20,3 +20,13 @@ export const createApplicationSchema = z.object({
   status: applicationStatusEnum.default('todo'),
   note: z.string().max(500, '备注最多500字').optional(),
 });
+
+//  更新投递记录的校验规则（status / sort_order 至少更新一个）
+export const updateApplicationSchema = z
+  .object({
+    status: applicationStatusEnum.optional(),
+    sort_order: z.number().int('排序值必须是整数').optional(),
+  })
+  .refine((data) => data.status !== undefined || data.sort_order !== undefined, {
+    message: '至少要提供一个要更新的字段',
+  });
