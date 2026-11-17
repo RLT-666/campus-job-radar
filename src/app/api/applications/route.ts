@@ -1,14 +1,22 @@
+/**
+ * 处理整个列表
+ * 核心功能：GET 和 POST
+ * 业务场景：前端 B 同学打开“看板”页，请求 /api/applications，这个文件里的 GET 就会把所有列表数据查出来给他；他点击“新建投递”，这个文件里的 POST 就会把数据存进数据库。
+ */
 import { NextResponse } from 'next/server';
 import { createApplicationSchema } from '@/lib/schema';
-import { supabase } from '@/lib/supabase'; // 引入刚才写的连接
+import { createClient } from '@/lib/supabase/server';
+import { MOCK_USER_ID } from '@/lib/constants';
 
 // 1. GET 请求：获取所有投递记录
 export async function GET() {
   try {
+    const supabase = await createClient();
     // 真实查询 Supabase 的 applications 表
     const { data, error } = await supabase
       .from('applications')
       .select('*')
+      .eq('user_id', MOCK_USER_ID) // 只查当前用户的记录
       .order('created_at', { ascending: false }); // 按时间倒序
 
     if (error) throw error;
@@ -23,6 +31,7 @@ export async function GET() {
 // 2. POST 请求：新建投递记录
 export async function POST(request: Request) {
   try {
+    const supabase = await createClient();
     const body = await request.json();
 
     // 1. 用 Zod 校验前端数据
@@ -36,7 +45,7 @@ export async function POST(request: Request) {
 
     // 2. 准备要存入 Supabase 的数据
   const newApplication = {
-        user_id: '123e4567-e89b-12d3-a456-426614174000', // 暂时随便写个，比如 '123e4567-e89b-12d3-a456-426614174000'
+        user_id: MOCK_USER_ID,
         company: validation.data.company,
         position: validation.data.position,
         channel: validation.data.channel,
