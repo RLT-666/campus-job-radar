@@ -1,7 +1,7 @@
 // src/lib/analytics/index.ts
 type EventName = 'signup' | 'view_timeline' | 'favorite_job' | 'create_application' | 'move_status' | 'push_sent' | 'push_open' | 'resume_match'
 
-export async function track(name: EventName, props?: Record<string, any>) {
+export async function track(name: EventName, props?: Record<string, unknown>) {
   try {
     await fetch('/api/track', {
       method: 'POST',
