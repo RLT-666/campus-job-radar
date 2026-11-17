@@ -6,7 +6,7 @@
  */
 import { NextResponse } from 'next/server';
 import { updateApplicationSchema } from '@/lib/schema';
-import { supabase } from '@/lib/supabase';
+import { createClient } from '@/lib/supabase/server';
 import { MOCK_USER_ID } from '@/lib/constants';
 // PATCH 请求：更新某条投递记录的 status / sort_order
 export async function PATCH(
@@ -14,6 +14,7 @@ export async function PATCH(
   { params }: { params: Promise<{ id: string }> }
 ) {
   try {
+    const supabase = await createClient();
     const { id } = await params;
     const body = await request.json();
 

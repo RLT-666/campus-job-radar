@@ -5,12 +5,13 @@
  */
 import { NextResponse } from 'next/server';
 import { createApplicationSchema } from '@/lib/schema';
-import { supabase } from '@/lib/supabase'; // 引入刚才写的连接
+import { createClient } from '@/lib/supabase/server';
 import { MOCK_USER_ID } from '@/lib/constants';
 
 // 1. GET 请求：获取所有投递记录
 export async function GET() {
   try {
+    const supabase = await createClient();
     // 真实查询 Supabase 的 applications 表
     const { data, error } = await supabase
       .from('applications')
@@ -30,6 +31,7 @@ export async function GET() {
 // 2. POST 请求：新建投递记录
 export async function POST(request: Request) {
   try {
+    const supabase = await createClient();
     const body = await request.json();
 
     // 1. 用 Zod 校验前端数据
