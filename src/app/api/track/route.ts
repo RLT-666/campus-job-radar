@@ -2,7 +2,6 @@
 import { NextResponse } from 'next/server'
 import { z } from 'zod'
 import { createClient } from '@/lib/supabase/server'
-// 假设你在这里导入了 db 用于插入数据
 
 const trackSchema = z.object({
   name: z.enum([
@@ -10,7 +9,8 @@ const trackSchema = z.object({
     'create_application', 'move_status', 'push_sent', 
     'push_open', 'resume_match'
   ]),
-  props: z.record(z.string(), z.any()).optional(),
+  // 注意：把 z.any() 改成了 z.unknown()，这样就不会报 ESLint 错误了
+  props: z.record(z.string(), z.unknown()).optional(),
 })
 
 export async function POST(request: Request) {
@@ -31,11 +31,23 @@ export async function POST(request: Request) {
 
     const { name, props } = result.data
 
-    // TODO: 等 A 把 analytics_events 表建好后，在这里插入数据库
-    // await db.insert(analyticsEvents).values({ user_id: user.id, name, props })
+    // 真正的落库动作
+    const { error: insertError } = await supabase
+      .from('analytics_events')
+      .insert({
+        user_id: user.id,
+        name: name,
+        props: props || {},
+      })
+
+    if (insertError) {
+      console.error('❌ 插入数据库报错了:', insertError)
+      return NextResponse.json({ error: insertError.message }, { status: 500 })
+    }
 
     return NextResponse.json({ ok: true })
   } catch (error) {
+    console.error('❌ 接口内部报错:', error)
     return NextResponse.json({ error: 'Internal Server Error' }, { status: 500 })
   }
 }
