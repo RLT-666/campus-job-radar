@@ -11,6 +11,7 @@ import { createClient } from '@/lib/supabase/server';
 export async function GET(request: Request) {
   try {
     const supabase = await createClient();
+    
 
     // 从 URL 读取搜索关键词，例如 /api/jobs?company=字节
     const { searchParams } = new URL(request.url);
@@ -39,6 +40,19 @@ export async function GET(request: Request) {
 export async function POST(request: Request) {
   try {
     const supabase = await createClient();
+
+     const authHeader = request.headers.get('Authorization');
+     const token = authHeader?.replace('Bearer ', '');
+      // 如果没有 Token，拒绝新增岗位
+    if (!token) {
+      return NextResponse.json({ success: false, message: '无权操作，请先登录' }, { status: 401 });
+    }
+
+    const { data: { user }, error: authError } = await supabase.auth.getUser(token);
+    if (authError || !user) {
+      return NextResponse.json({ success: false, message: '登录已过期' }, { status: 401 });
+    }
+
     const body = await request.json();
 
     // 1. 用 Zod 校验前端数据

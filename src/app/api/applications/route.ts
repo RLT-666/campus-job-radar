@@ -6,17 +6,28 @@
 import { NextResponse } from 'next/server';
 import { createApplicationSchema } from '@/lib/schema';
 import { createClient } from '@/lib/supabase/server';
-import { MOCK_USER_ID } from '@/lib/constants';
-
 // 1. GET 请求：获取所有投递记录
 export async function GET() {
   try {
     const supabase = await createClient();
+
+// 获取当前登录的用户
+const { 
+  data: { user }, error: authError } = await supabase.auth.getUser();
+
+// 如果没登录或者报错，直接返回 401 未授权
+if (authError || !user) {
+  return NextResponse.json({ success: false, message: '未登录或登录已过期' }, { status: 401 });
+}
+
+// 拿到真实的用户 ID
+const userId = user.id;
+
     // 真实查询 Supabase 的 applications 表
     const { data, error } = await supabase
       .from('applications')
       .select('*')
-      .eq('user_id', MOCK_USER_ID) // 只查当前用户的记录
+      .eq('user_id', userId) // 只查当前用户的记录
       .order('created_at', { ascending: false }); // 按时间倒序
 
     if (error) throw error;
@@ -32,6 +43,17 @@ export async function GET() {
 export async function POST(request: Request) {
   try {
     const supabase = await createClient();
+    // 获取当前登录的用户
+    const { 
+      data: { user }, error: authError } = await supabase.auth.getUser();
+
+    // 如果没登录或者报错，直接返回 401 未授权
+    if (authError || !user) {
+      return NextResponse.json({ success: false, message: '未登录或登录已过期' }, { status: 401 });
+    }
+
+    // 拿到真实的用户 ID
+    const userId = user.id;
     const body = await request.json();
 
     // 1. 用 Zod 校验前端数据
@@ -45,7 +67,7 @@ export async function POST(request: Request) {
 
     // 2. 准备要存入 Supabase 的数据
   const newApplication = {
-        user_id: MOCK_USER_ID,
+        user_id: userId,
         company: validation.data.company,
         position: validation.data.position,
         channel: validation.data.channel,

@@ -7,7 +7,7 @@
 import { NextResponse } from 'next/server';
 import { updateApplicationSchema } from '@/lib/schema';
 import { createClient } from '@/lib/supabase/server';
-import { MOCK_USER_ID } from '@/lib/constants';
+import z from 'zod';
 // PATCH 请求：更新某条投递记录的 status / sort_order
 export async function PATCH(
   request: Request,
@@ -15,6 +15,16 @@ export async function PATCH(
 ) {
   try {
     const supabase = await createClient();
+    // 获取当前登录的用户
+    const { data: { user }, error: authError } = await supabase.auth.getUser();
+
+    // 如果没登录或者报错，直接返回 401 未授权
+    if (authError || !user) {
+      return NextResponse.json({ success: false, message: '未登录或登录已过期' }, { status: 401 });
+    }
+
+    // 拿到真实的用户 ID
+    const userId = user.id;
     const { id } = await params;
     const body = await request.json();
 
@@ -32,10 +42,14 @@ export async function PATCH(
       .from('applications')
       .update(validation.data)
       .eq('id', id)
-      .eq('user_id', MOCK_USER_ID)
+      .eq('user_id', userId)
       .select();
 
     if (error) throw error;
+    
+    if (!z.string().uuid().safeParse(id).success) {
+      return NextResponse.json({ success: false, message: '无效的记录 ID' }, { status: 400 });
+    }
 
     // 3. 没有命中任何记录（id 不存在或不属于当前用户）
     if (!data || data.length === 0) {
