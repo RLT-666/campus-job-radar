@@ -12,7 +12,7 @@ const supabase = createClient(supabaseUrl, supabaseKey);
 // 2. 写一个异步函数，专门用来抓取网页
 async function fetchAndSaveJob() {
   try {
-    const url = 'https://example.com'; // 换成你想抓的网址
+    const url = 'https://www.nowcoder.com'; // 换成你想抓的网址
     const response = await fetch(url);
     const html = await response.text();
     const $ = cheerio.load(html);
