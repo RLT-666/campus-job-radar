@@ -30,3 +30,17 @@ export const updateApplicationSchema = z
   .refine((data) => data.status !== undefined || data.sort_order !== undefined, {
     message: '至少要提供一个要更新的字段',
   });
+  // 岗位表校验
+export const jobSchema = z.object({
+  company: z.string().min(1, '公司名不能为空'),
+  position: z.string().min(1, '岗位名不能为空'),
+  location: z.string().optional(),
+  deadline: z.string().datetime().optional(), // ISO格式时间字符串
+  source: z.string().optional(),
+  url: z.string().url('必须是合法的URL').optional(),
+});
+
+// 收藏表校验
+export const favoriteSchema = z.object({
+  job_id: z.string().uuid('必须是合法的UUID'),
+});
