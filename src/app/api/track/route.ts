@@ -9,17 +9,26 @@ const trackSchema = z.object({
     'create_application', 'move_status', 'push_sent', 
     'push_open', 'resume_match'
   ]),
-  // 注意：把 z.any() 改成了 z.unknown()，这样就不会报 ESLint 错误了
   props: z.record(z.string(), z.unknown()).optional(),
 })
 
 export async function POST(request: Request) {
   try {
     const supabase = await createClient()
-    const { data: { user } } = await supabase.auth.getUser()
 
-    if (!user) {
-      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+    // 1. 从 Header 里获取 Token（与 A 的接口保持一致）
+    const authHeader = request.headers.get('Authorization');
+    const token = authHeader?.replace('Bearer ', '');
+
+    if (!token) {
+      return NextResponse.json({ error: 'Unauthorized: Missing Token' }, { status: 401 })
+    }
+
+    // 2. 把 Token 传给 getUser 验证
+    const { data: { user }, error: authError } = await supabase.auth.getUser(token);
+
+    if (authError || !user) {
+      return NextResponse.json({ error: 'Unauthorized: Invalid Token' }, { status: 401 })
     }
 
     const body = await request.json()
@@ -31,7 +40,7 @@ export async function POST(request: Request) {
 
     const { name, props } = result.data
 
-    // 真正的落库动作
+    // 3. 真正的落库动作
     const { error: insertError } = await supabase
       .from('analytics_events')
       .insert({
