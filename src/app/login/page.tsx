@@ -16,6 +16,7 @@ import {
   User,
 } from 'lucide-react'
 
+import { createClient } from '@/lib/supabase/client'
 import { Button } from '@/components/ui/Button'
 import { Input } from '@/components/ui/Input'
 
@@ -23,13 +24,6 @@ type Status = 'idle' | 'sending' | 'sent' | 'error'
 type AuthMode = 'login' | 'register'
 type LoginMethod = 'phone-password' | 'email-password' | 'phone-code'
 
-/**
- * TODO(成员 李向)：替换为 Supabase 的 sendMagicLink。
- * redirectTo 已在页内做过站内校验，可直接透传。
- */
-async function sendMagicLink(_email: string, _redirectTo: string): Promise<void> {
-  await new Promise((resolve) => setTimeout(resolve, 800))
-}
 
 const styles = `
 .radar-login {
@@ -450,6 +444,52 @@ function LoginForm() {
     }
   }, [codeCountdown])
 
+    async function handleSubmit() {
+    setStatus('sending')
+    setMessage('')
+
+    try {
+      const supabase = createClient()
+
+      if (authMode === 'login') {
+        // 真实的登录请求
+        const { error } = await supabase.auth.signInWithPassword({
+          email: account,
+          password: password,
+        })
+        if (error) throw new Error(error.message)
+      } else {
+        // 真实的注册请求
+        const { error } = await supabase.auth.signUp({
+          email: account,
+          password: password,
+        })
+        if (error) throw new Error(error.message)
+      }
+
+      setStatus('sent')
+      setMessage(`操作成功！欢迎${authMode === 'login' ? '登录' : '注册'}校招雷达。`)
+      
+      // 登录成功，延迟 1.5 秒后自动跳转页面
+      setTimeout(() => {
+        window.location.href = nextPath
+      }, 1500)
+
+    } catch (error: unknown) {
+      setStatus('error')
+      
+      const errorMessage = error instanceof Error ? error.message : '未知错误'
+      
+      if (errorMessage.includes('Invalid login credentials')) {
+        setMessage('邮箱或密码错误，请重试或去注册。')
+      } else if (errorMessage.includes('at least 6 characters')) {
+        setMessage('密码长度必须大于 6 位。')
+      } else {
+        setMessage('操作失败：' + errorMessage)
+      }
+    }
+  }
+
   const handleSendCode = () => {
     if (!account || account.length < 11) {
       setStatus('error')
@@ -459,20 +499,7 @@ function LoginForm() {
     setCodeCountdown(60)
   }
 
-  async function handleSubmit() {
-    setStatus('sending')
-    setMessage('')
-
-    try {
-      await sendMagicLink(account, nextPath)
-      setStatus('sent')
-      setMessage(`操作成功！欢迎${authMode === 'login' ? '登录' : '注册'}校招雷达。`)
-    } catch {
-      setStatus('error')
-      setMessage('操作失败，请检查网络后重试。')
-    }
-  }
-
+  
   function handleFormSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault()
     if (sending) return
