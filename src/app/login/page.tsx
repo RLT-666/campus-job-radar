@@ -1,421 +1,165 @@
 'use client'
 
-import { Suspense, useMemo, useState, type FormEvent, useEffect } from 'react'
+import { Suspense, useEffect, useMemo, useState, type FormEvent } from 'react'
 import { useSearchParams } from 'next/navigation'
 import {
   AlertCircle,
   ArrowRight,
   CheckCircle2,
-  ChevronDown,
-  GraduationCap,
+  Clock3,
   Loader2,
-  Mail,
-  Phone,
-  ShieldCheck,
   Lock,
+  Mail,
+  Radar,
+  ShieldCheck,
+  Smartphone,
   User,
 } from 'lucide-react'
 
 import { Button } from '@/components/ui/Button'
 import { Input } from '@/components/ui/Input'
+import { cn } from '@/lib/utils'
+
+/* ============================================================
+   设计系统「截止时刻表 · Editorial」
+   纸面 #faf9f6 / 墨色 #1a1a17 / 克莱因蓝 #002fa7 / 琥珀（仅临近截止）
+   字体：Noto Serif SC（标题，--font-serif-sc）+ Geist（UI）
+   规则：单一强调色、细分隔线、动效仅一次入场 + 倒计时跳动
+   ============================================================ */
+
+const pageCss = `
+/* 浏览器原生面跟随纸面世界 */
+.lp-page { color-scheme: light; }
+.lp-page ::selection { background: rgba(0, 47, 167, 0.14); }
+
+/* 入场：整页唯一的一组 reveal，指数缓出 */
+@keyframes lp-reveal {
+  from { opacity: 0; transform: translateY(22px); }
+  to   { opacity: 1; transform: none; }
+}
+.lp-reveal  { animation: lp-reveal 0.8s cubic-bezier(0.16, 1, 0.3, 1) both; }
+.lp-reveal-2 { animation-delay: 0.08s; }
+.lp-reveal-3 { animation-delay: 0.18s; }
+.lp-reveal-4 { animation-delay: 0.28s; }
+
+/* 时刻表行：错峰浮现 */
+@keyframes lp-row {
+  from { opacity: 0; transform: translateY(10px); }
+  to   { opacity: 1; transform: none; }
+}
+.lp-row { animation: lp-row 0.6s cubic-bezier(0.16, 1, 0.3, 1) both; }
+
+/* 表单面板切换 */
+@keyframes lp-panel {
+  from { opacity: 0; transform: translateX(10px); }
+  to   { opacity: 1; transform: none; }
+}
+.lp-panel { animation: lp-panel 0.32s cubic-bezier(0.16, 1, 0.3, 1) both; }
+
+/* 图标加载指示 */
+@keyframes lp-spin { to { transform: rotate(360deg); } }
+.lp-spin { animation: lp-spin 0.9s linear infinite; }
+
+/* 动效敏感用户：全部静止 */
+@media (prefers-reduced-motion: reduce) {
+  .lp-reveal, .lp-reveal-2, .lp-reveal-3, .lp-reveal-4, .lp-row, .lp-panel, .lp-spin {
+    animation: none !important;
+  }
+}
+`
+
+/* 示意时刻表数据：琥珀色行 = 临近截止（唯一暖色信号） */
+const timetable = [
+  { company: '腾讯 · 前端实习', batch: '2027 届暑期', days: 12 },
+  { company: '美团 · 后端开发工程师', batch: '2027 届秋招', days: 21 },
+  { company: '字节跳动 · 产品培训生', batch: '2026 届补录', days: 34 },
+  { company: '网易 · 游戏策划', batch: '2027 届校招正式批', days: 46 },
+]
+
+/* 临近截止行：登录页唯一“活着”的细节 */
+const lateInitialSeconds = 3 * 86400 + 2 * 3600 + 41 * 60 + 9
 
 type Status = 'idle' | 'sending' | 'sent' | 'error'
 type AuthMode = 'login' | 'register'
-type LoginMethod = 'phone-password' | 'email-password' | 'phone-code'
+type LoginMethod = 'password' | 'email' | 'code'
 
 /**
  * TODO(成员 李向)：替换为 Supabase 的 sendMagicLink。
  * redirectTo 已在页内做过站内校验，可直接透传。
  */
-async function sendMagicLink(_email: string, _redirectTo: string): Promise<void> {
+async function sendMagicLink(_account: string, _redirectTo: string): Promise<void> {
   await new Promise((resolve) => setTimeout(resolve, 800))
 }
 
-const styles = `
-.radar-login {
-  position: relative;
-  min-height: 100dvh;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  padding: clamp(24px, 5vw, 64px);
-  overflow: hidden;
-  background: #060913;
-  color: #e8ecf7;
-}
-.radar-bg { position: absolute; inset: 0; pointer-events: none; }
-.radar-grid {
-  position: absolute; inset: -25%;
-  background-image:
-    linear-gradient(to right, rgba(148, 163, 184, 0.07) 1px, transparent 1px),
-    linear-gradient(to bottom, rgba(148, 163, 184, 0.07) 1px, transparent 1px);
-  background-size: 64px 64px;
-  -webkit-mask-image: radial-gradient(ellipse at 50% 42%, #000 18%, transparent 72%);
-  mask-image: radial-gradient(ellipse at 50% 42%, #000 18%, transparent 72%);
-}
-.radar-glow { position: absolute; border-radius: 50%; filter: blur(90px); opacity: 0.55; }
-.radar-glow-a { top: -180px; left: -140px; width: 540px; height: 540px; background: radial-gradient(circle, #615fff, transparent 70%); }
-.radar-glow-b { right: -120px; bottom: -160px; width: 460px; height: 460px; background: radial-gradient(circle, #4f4dd8, transparent 70%); }
-.radar-sweep {
-  position: absolute; top: -320px; right: -380px; width: 980px; height: 980px;
-  border-radius: 50%;
-  background: conic-gradient(from 0deg, rgba(97, 95, 255, 0.22), transparent 30%);
-  animation: radar-sweep 18s linear infinite;
-}
-@keyframes radar-sweep { to { transform: rotate(360deg); } }
-
-.radar-shell {
-  position: relative; z-index: 1;
-  width: 100%; max-width: 1120px;
-  display: grid; grid-template-columns: 1.05fr 0.95fr;
-  gap: clamp(32px, 5vw, 80px);
-  align-items: center;
-}
-.radar-wordmark { display: inline-flex; align-items: center; gap: 10px; font-size: 15px; font-weight: 600; transition: transform 0.3s cubic-bezier(0.4, 0, 0.2, 1); }
-.radar-wordmark:hover { transform: translateY(-2px); }
-.radar-mark {
-  display: inline-flex; align-items: center; justify-content: center;
-  width: 34px; height: 34px; border-radius: 11px;
-  color: #a5a4ff;
-  background: rgba(97, 95, 255, 0.16);
-  border: 1px solid rgba(97, 95, 255, 0.35);
-  transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
-}
-.radar-wordmark:hover .radar-mark {
-  box-shadow: 0 0 20px rgba(97, 95, 255, 0.4);
-  border-color: rgba(97, 95, 255, 0.6);
-}
-.radar-eyebrow {
-  margin: 28px 0 14px;
-  font-size: 11px; font-weight: 500;
-  letter-spacing: 0.22em;
-  color: #615fff;
-}
-.radar-title {
-  margin: 0;
-  font-size: clamp(34px, 4.4vw, 54px);
-  line-height: 1.1;
-  font-weight: 600;
-  letter-spacing: -0.02em;
-  color: #f8fafc;
-}
-.radar-title em { font-style: normal; color: #a5a4ff; }
-.radar-lede { margin: 20px 0 0; max-width: 30em; font-size: 15px; line-height: 1.75; color: #94a3b8; }
-.radar-points { display: grid; gap: 12px; margin: 32px 0 0; padding: 0; list-style: none; }
-.radar-points li { display: flex; align-items: center; gap: 10px; font-size: 14px; color: #cbd5e1; transition: transform 0.2s ease; }
-.radar-points li:hover { transform: translateX(4px); }
-.radar-dot {
-  width: 6px; height: 6px; border-radius: 50%;
-  background: #615fff;
-  box-shadow: 0 0 0 4px rgba(97, 95, 255, 0.16);
-  transition: all 0.3s ease;
-}
-.radar-points li:hover .radar-dot {
-  box-shadow: 0 0 0 6px rgba(97, 95, 255, 0.25), 0 0 12px rgba(97, 95, 255, 0.4);
-}
-
-.radar-panel { display: flex; flex-direction: column; gap: 14px; }
-.radar-card {
-  position: relative;
-  padding: clamp(24px, 3vw, 36px);
-  border-radius: 20px;
-  background: linear-gradient(180deg, rgba(255, 255, 255, 0.08), rgba(255, 255, 255, 0.03));
-  border: 1px solid rgba(255, 255, 255, 0.12);
-  box-shadow:
-    0 40px 90px -40px rgba(2, 6, 23, 0.95),
-    inset 0 1px 0 rgba(255, 255, 255, 0.16);
-  -webkit-backdrop-filter: blur(18px);
-  backdrop-filter: blur(18px);
-  transition: all 0.4s cubic-bezier(0.4, 0, 0.2, 1);
-}
-.radar-card:hover {
-  transform: translateY(-4px);
-  box-shadow:
-    0 50px 100px -40px rgba(2, 6, 23, 0.95),
-    0 0 40px -10px rgba(97, 95, 255, 0.15),
-    inset 0 1px 0 rgba(255, 255, 255, 0.16);
-  border-color: rgba(97, 95, 255, 0.25);
-}
-
-.radar-mode-tabs {
-  display: flex;
-  gap: 4px;
-  padding: 4px;
-  background: rgba(255, 255, 255, 0.05);
-  border-radius: 12px;
-  margin-bottom: 20px;
-}
-.radar-mode-tab {
-  flex: 1;
-  padding: 10px 16px;
-  border: none;
-  background: transparent;
-  color: #94a3b8;
-  font-size: 14px;
-  font-weight: 500;
-  border-radius: 8px;
-  cursor: pointer;
-  transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
-}
-.radar-mode-tab:hover {
-  color: #cbd5e1;
-  background: rgba(255, 255, 255, 0.05);
-}
-.radar-mode-tab.active {
-  background: #615fff;
-  color: white;
-  box-shadow: 0 4px 12px rgba(97, 95, 255, 0.3);
-}
-
-.radar-method-selector {
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-  margin-bottom: 0;
-}
-.radar-method-btn {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  padding: 12px 16px;
-  background: rgba(255, 255, 255, 0.04);
-  border: 1px solid rgba(255, 255, 255, 0.1);
-  border-radius: 12px;
-  cursor: pointer;
-  transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
-}
-.radar-method-btn:hover {
-  border-color: rgba(97, 95, 255, 0.4);
-  background: rgba(97, 95, 255, 0.08);
-}
-.radar-method-btn.active {
-  border-color: #615fff;
-  background: rgba(97, 95, 255, 0.1);
-  box-shadow: 0 0 0 1px rgba(97, 95, 255, 0.2);
-}
-.radar-method-left {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-}
-.radar-method-icon {
-  width: 20px;
-  height: 20px;
-  color: #94a3b8;
-  transition: color 0.3s ease;
-}
-.radar-method-btn.active .radar-method-icon {
-  color: #615fff;
-}
-.radar-method-text {
-  font-size: 14px;
-  font-weight: 500;
-  color: #cbd5e1;
-}
-.radar-method-arrow {
-  width: 16px;
-  height: 16px;
-  color: #64748b;
-  transition: transform 0.3s ease, color 0.3s ease;
-}
-.radar-method-btn.active .radar-method-arrow {
-  transform: rotate(180deg);
-  color: #615fff;
-}
-
-.radar-method { display: flex; flex-direction: column; }
-.radar-method-btn { width: 100%; text-align: left; font-family: inherit; }
-.radar-method-panel {
-  display: flex;
-  flex-direction: column;
-  gap: 12px;
-  padding: 12px 0 2px;
-  animation: radar-panel-open 0.28s cubic-bezier(0.16, 1, 0.3, 1) both;
-}
-@keyframes radar-panel-open {
-  from { opacity: 0; transform: translateY(-6px); }
-  to { opacity: 1; transform: none; }
-}
-
-
-.radar-form { display: flex; flex-direction: column; gap: 14px; }
-.radar-label { font-size: 13px; font-weight: 500; color: #cbd5e1; }
-.radar-field { position: relative; }
-.radar-field-icon {
-  position: absolute; left: 14px; top: 50%;
-  transform: translateY(-50%);
-  color: #64748b; pointer-events: none;
-  transition: color 0.3s ease;
-}
-.radar-field:focus-within .radar-field-icon {
-  color: #615fff;
-}
-.radar-msg {
-  display: flex; align-items: center; gap: 6px;
-  margin: 0; font-size: 12.5px; line-height: 1.5;
-  color: #94a3b8;
-}
-.radar-msg.is-error { color: #fca5a5; }
-.radar-legal { margin: 18px 0 0; font-size: 11.5px; line-height: 1.7; color: #64748b; }
-.radar-note { display: flex; align-items: center; gap: 6px; margin: 0; font-size: 12px; color: #64748b; transition: color 0.3s ease; }
-.radar-note:hover { color: #615fff; }
-
-.radar-code-btn {
-  position: absolute;
-  right: 8px;
-  top: 50%;
-  transform: translateY(-50%);
-  padding: 8px 14px;
-  border: none;
-  background: rgba(97, 95, 255, 0.15);
-  color: #a5a4ff;
-  font-size: 13px;
-  font-weight: 500;
-  border-radius: 8px;
-  cursor: pointer;
-  transition: all 0.3s ease;
-}
-.radar-code-btn:hover:not(:disabled) {
-  background: rgba(97, 95, 255, 0.25);
-}
-.radar-code-btn:disabled {
-  opacity: 0.5;
-  cursor: not-allowed;
-}
-
-.radar-done h2 { margin: 16px 0 8px; font-size: 20px; font-weight: 600; color: #f8fafc; }
-.radar-done p { margin: 0 0 20px; font-size: 13.5px; line-height: 1.7; color: #94a3b8; }
-.radar-done-icon {
-  display: inline-flex; align-items: center; justify-content: center;
-  width: 44px; height: 44px; border-radius: 14px;
-  color: #615fff;
-  background: rgba(97, 95, 255, 0.12);
-  border: 1px solid rgba(97, 95, 255, 0.3);
-  animation: radar-icon-pop 0.5s cubic-bezier(0.175, 0.885, 0.32, 1.275) both;
-}
-@keyframes radar-icon-pop {
-  0% { transform: scale(0); opacity: 0; }
-  50% { transform: scale(1.2); }
-  100% { transform: scale(1); opacity: 1; }
-}
-.radar-done-actions { display: flex; gap: 10px; }
-
-.radar-rise { animation: radar-rise 0.8s cubic-bezier(0.16, 1, 0.3, 1) both; }
-.radar-rise-2 { animation-delay: 0.15s; }
-@keyframes radar-rise { from { opacity: 0; transform: translateY(24px); } to { opacity: 1; transform: none; } }
-.radar-spin { animation: radar-spin 0.9s linear infinite; }
-@keyframes radar-spin { to { transform: rotate(360deg); } }
-
-.radar-input-glow {
-  position: absolute; inset: -2px;
-  border-radius: 12px;
-  background: linear-gradient(135deg, rgba(97, 95, 255, 0.4), transparent 50%);
-  opacity: 0;
-  filter: blur(8px);
-  transition: opacity 0.3s ease;
-  z-index: -1;
-    pointer-events: none;
-}
-.radar-field:focus-within .radar-input-glow {
-  opacity: 1;
-}
-
-.radar-form-slide {
-  animation: radar-form-slide 0.4s cubic-bezier(0.16, 1, 0.3, 1) both;
-}
-@keyframes radar-form-slide {
-  from { opacity: 0; transform: translateX(16px); }
-  to { opacity: 1; transform: none; }
-}
-
-@media (max-width: 900px) {
-  .radar-login { align-items: flex-start; padding: 24px 16px 36px; }
-  .radar-shell { grid-template-columns: 1fr; gap: 24px; }
-  .radar-sweep { opacity: 0.6; }
-  .radar-eyebrow { margin-top: 20px; }
-  .radar-lede { font-size: 14px; }
-  .radar-points { display: none; }
-  .radar-card { padding: clamp(20px, 4vw, 28px); border-radius: 16px; }
-//   .radar-card-overlay { border-radius: 16px; }
-}
-@media (max-width: 480px) {
-  .radar-done-actions { flex-direction: column; }
-}
-@media (prefers-reduced-motion: reduce) {
-  .radar-sweep, .radar-rise, .radar-spin, .radar-wordmark, .radar-mark, .radar-points li, .radar-dot, .radar-card, .radar-card-overlay, .radar-note, .radar-done-icon, .radar-input-glow, .radar-form-slide { animation: none !important; transition: none !important; }
-}
-`
-
-const loginMethods = [
-  { id: 'phone-password' as LoginMethod, label: '手机号/账号 + 密码', icon: User },
-  { id: 'email-password' as LoginMethod, label: '邮箱 + 密码', icon: Mail },
-  { id: 'phone-code' as LoginMethod, label: '手机号 + 验证码', icon: Phone },
-]
-
 export default function LoginPage() {
   return (
-    <main className="radar-login">
-      <style>{styles}</style>
+    <main
+      className={cn(
+        'lp-page relative min-h-dvh bg-[#faf9f6] px-5 py-8 text-[#1a1a17] sm:px-10 lg:py-0',
+      )}
+    >
+      <style>{pageCss}</style>
 
-      <div className="radar-bg" aria-hidden="true">
-        <div className="radar-grid" />
-        <div className="radar-glow radar-glow-a" />
-        <div className="radar-glow radar-glow-b" />
-        <div className="radar-sweep" />
+      {/* 背景层：编辑排版的竖向栏线，纯环境层 */}
+      <div aria-hidden="true" className="pointer-events-none absolute inset-0 hidden lg:block">
+        <div className="mx-auto grid h-full max-w-6xl grid-cols-4 px-4">
+          {[0, 1, 2, 3].map((i) => (
+            <div key={i} className="border-l border-[#ece8de] first:border-l-0" />
+          ))}
+        </div>
       </div>
 
-      <div className="radar-shell">
-        <section className="radar-rise">
-          <div className="radar-wordmark">
-            <span className="radar-mark">
-              <GraduationCap size={18} strokeWidth={2} />
+      <div className="relative mx-auto grid min-h-dvh w-full max-w-6xl items-center gap-10 px-2 py-6 lg:grid-cols-[1.15fr_1fr] lg:gap-16 lg:py-10">
+        {/* 左列：品牌叙事 + 截止时刻表 */}
+        <section>
+          <div className="lp-reveal flex items-center gap-3">
+            <span className="flex h-10 w-10 items-center justify-center rounded-xl bg-[#002fa7] text-white">
+              <Radar size={20} strokeWidth={2} aria-hidden="true" />
             </span>
-            <span>校招雷达</span>
+            <span className="text-[16px] font-semibold tracking-[0.02em]">校招雷达</span>
+            <span className="ml-auto hidden text-[11px] font-medium tracking-[0.22em] text-[#7d786d] sm:block">
+              CAMPUS JOB RADAR
+            </span>
           </div>
 
-          <p className="radar-eyebrow">CAMPUS JOB RADAR</p>
-          <h1 className="radar-title">
+          <h1
+            className="lp-reveal lp-reveal-2 mt-14 text-[clamp(38px,4.6vw,60px)] font-black leading-[1.18] tracking-[-0.01em]"
+            style={{ fontFamily: 'var(--font-serif-sc), serif' }}
+          >
             别再错过
             <br />
-            任何一个<em>截止日期</em>
+            任何一个<span className="text-[#002fa7]">截止日期</span>。
           </h1>
-          <p className="radar-lede">
-            把分散在各校就业网、公众号和企业官网的校招信息收进一张时间线。
-            截止前3天，我们提醒您。
+          <p className="lp-reveal lp-reveal-3 mt-5 max-w-[32em] text-[15px] leading-[1.85] text-[#5f5b52]">
+            把分散在各校就业网、公众号与企业官网的校招信息收进一张时间线；截止前 3 天，准时提醒你。
           </p>
 
-          <ul className="radar-points">
-            <li>
-              <span className="radar-dot" />
-              一次收藏，自动盯住截止时间
-            </li>
-            <li>
-              <span className="radar-dot" />
-              投递看板，随时知道卡在哪一轮
-            </li>
-            <li>
-              <span className="radar-dot" />
-              简历对比 JD，先补短板再投
-            </li>
-          </ul>
+          {/* 截止时刻表：产品事实即艺术 */}
+          <div className="mt-12 hidden max-w-[560px] md:block">
+            <div className="flex items-baseline justify-between border-b border-[#1a1a17] pb-2.5">
+              <span className="text-[12.5px] font-semibold tracking-[0.08em]">近期截止</span>
+              <span className="text-[11.5px] text-[#7d786d]">登录后同步你的收藏</span>
+            </div>
+            <Timetable />
+          </div>
         </section>
 
-        <section className="radar-panel radar-rise radar-rise-2">
-          <div className="radar-card">
+        {/* 右列：登录任务面板 */}
+        <section className="lp-reveal lp-reveal-4 w-full">
+          <div className="rounded-2xl border border-[#e7e3d9] bg-white p-7 shadow-[0_1px_2px_rgba(26,26,23,0.04),0_20px_48px_-28px_rgba(26,26,23,0.18)] sm:p-9">
             <Suspense
               fallback={
                 <div className="flex h-80 items-center justify-center">
-                  <Loader2 className="radar-spin text-slate-500" size={20} />
+                  <Loader2 size={20} className={cn('lp-spin text-[#7d786d]')} aria-hidden="true" />
                 </div>
               }
             >
               <LoginForm />
             </Suspense>
-            
           </div>
 
-          <p className="radar-note">
-            <ShieldCheck size={14} />
+          <p className="mt-4 flex items-center gap-1.5 pl-1 text-xs text-[#7d786d]">
+            <ShieldCheck size={14} className="shrink-0 text-[#002fa7]" aria-hidden="true" />
             仅用于登录与截止提醒，不向第三方共享信息
           </p>
         </section>
@@ -424,10 +168,96 @@ export default function LoginPage() {
   )
 }
 
+/* 时刻表：引导点线 + 倒计时，行悬浮回应指针 */
+function Timetable() {
+  const [lateSeconds, setLateSeconds] = useState(lateInitialSeconds)
+
+  useEffect(() => {
+    const timer = setInterval(() => setLateSeconds((s) => Math.max(0, s - 1)), 1000)
+    return () => clearInterval(timer)
+  }, [])
+
+  const clock = useMemo(() => {
+    const h = Math.floor(lateSeconds / 3600)
+    const m = Math.floor((lateSeconds % 3600) / 60)
+    const s = lateSeconds % 60
+    return [h, m, s].map((n) => String(n).padStart(2, '0')).join(':')
+  }, [lateSeconds])
+
+  return (
+    <ul role="table" aria-label="近期校招截止倒计时（示意数据）">
+      <li
+        className="lp-row flex items-center gap-3 border-b border-[#ece8de] py-3.5 transition-colors duration-200 hover:bg-[#f3f1ea]"
+        style={{ animationDelay: '0.36s' }}
+      >
+        <span aria-hidden="true" className="h-2 w-2 shrink-0 rounded-full bg-[#b45309]" />
+        <div className="min-w-0">
+          <p className="truncate text-[14.5px] font-semibold leading-tight">腾讯 · 前端实习</p>
+          <p className="mt-0.5 text-[11.5px] text-[#7d786d]">2027 届暑期</p>
+        </div>
+        <span aria-hidden="true" className="mx-1 flex-1 -translate-y-1 border-b border-dotted border-[#d8d3c6]" />
+        <span className="flex shrink-0 items-center gap-1.5 rounded-full border border-[#f2d9b6] bg-[#fdf6ec] px-2.5 py-1 text-[12.5px] font-semibold tabular-nums text-[#b45309]">
+          <Clock3 size={13} aria-hidden="true" />
+          还剩 {clock}
+        </span>
+      </li>
+
+      {timetable.map((row, i) => (
+        <li
+          key={row.company}
+          className="lp-row flex items-center gap-3 border-b border-[#ece8de] py-3.5 transition-colors duration-200 last:border-b-0 hover:bg-[#f3f1ea]"
+          style={{ animationDelay: `${0.44 + i * 0.06}s` }}
+        >
+          <span aria-hidden="true" className="h-2 w-2 shrink-0 rounded-full bg-[#002fa7]/70" />
+          <div className="min-w-0">
+            <p className="truncate text-[14.5px] font-semibold leading-tight">{row.company}</p>
+            <p className="mt-0.5 text-[11.5px] text-[#7d786d]">{row.batch}</p>
+          </div>
+          <span aria-hidden="true" className="mx-1 flex-1 -translate-y-1 border-b border-dotted border-[#d8d3c6]" />
+          <span className="shrink-0 text-[12.5px] font-medium tabular-nums text-[#7d786d]">
+            D-{row.days}
+          </span>
+        </li>
+      ))}
+    </ul>
+  )
+}
+
+/* 三种登录方式：与既有产品能力一一对应 */
+const loginMethods: {
+  id: LoginMethod
+  label: string
+  accountLabel: string
+  accountIcon: typeof User
+  accountPlaceholder: string
+}[] = [
+  {
+    id: 'password',
+    label: '密码登录',
+    accountLabel: '手机号 / 账号',
+    accountIcon: User,
+    accountPlaceholder: '手机号或账号',
+  },
+  {
+    id: 'email',
+    label: '邮箱登录',
+    accountLabel: '邮箱',
+    accountIcon: Mail,
+    accountPlaceholder: '请输入邮箱地址',
+  },
+  {
+    id: 'code',
+    label: '验证码登录',
+    accountLabel: '手机号',
+    accountIcon: Smartphone,
+    accountPlaceholder: '请输入手机号',
+  },
+]
+
 function LoginForm() {
   const searchParams = useSearchParams()
   const [authMode, setAuthMode] = useState<AuthMode>('login')
-  const [loginMethod, setLoginMethod] = useState<LoginMethod>('phone-password')
+  const [loginMethod, setLoginMethod] = useState<LoginMethod>('password')
   const [account, setAccount] = useState('')
   const [password, setPassword] = useState('')
   const [code, setCode] = useState('')
@@ -438,28 +268,67 @@ function LoginForm() {
   // 只允许站内绝对路径，避免 //evil.com 这类开放重定向
   const nextPath = useMemo(() => {
     const raw = searchParams.get('next') ?? ''
-    return raw.startsWith('/') && !raw.startsWith('//') ? raw : '/timeline'
+    return raw.startsWith('/') && !raw.startsWith('//') ? raw : '/board'
   }, [searchParams])
 
   const sending = status === 'sending'
 
   useEffect(() => {
     if (codeCountdown > 0) {
-      const timer = setTimeout(() => setCodeCountdown(c => c - 1), 1000)
+      const timer = setTimeout(() => setCodeCountdown((c) => c - 1), 1000)
       return () => clearTimeout(timer)
     }
   }, [codeCountdown])
 
+  function clearMessage() {
+    if (status === 'error') {
+      setStatus('idle')
+      setMessage('')
+    }
+  }
+
+  function validate(): string | null {
+    if (loginMethod === 'code') {
+      if (account.replace(/\D/g, '').length !== 11) {
+        return '手机号格式不对：请输入 11 位大陆手机号。'
+      }
+      if (code.length !== 6) {
+        return '验证码应为 6 位数字，请核对短信后再提交。'
+      }
+      return null
+    }
+    if (!account.trim()) {
+      return '请先填写账号信息。'
+    }
+    if (loginMethod === 'email' && !account.includes('@')) {
+      return '邮箱格式不对：请填写包含 @ 的完整邮箱。'
+    }
+    if (!password) {
+      return '请输入密码后再提交。'
+    }
+    if (authMode === 'register' && password.length < 6) {
+      return '密码至少需要 6 位，请调整后再提交。'
+    }
+    return null
+  }
+
   const handleSendCode = () => {
-    if (!account || account.length < 11) {
+    if (account.replace(/\D/g, '').length !== 11) {
       setStatus('error')
-      setMessage('请输入有效的手机号')
+      setMessage('手机号格式不对：请输入 11 位大陆手机号后再获取验证码。')
       return
     }
     setCodeCountdown(60)
   }
 
   async function handleSubmit() {
+    const problem = validate()
+    if (problem) {
+      setStatus('error')
+      setMessage(problem)
+      return
+    }
+
     setStatus('sending')
     setMessage('')
 
@@ -469,7 +338,7 @@ function LoginForm() {
       setMessage(`操作成功！欢迎${authMode === 'login' ? '登录' : '注册'}校招雷达。`)
     } catch {
       setStatus('error')
-      setMessage('操作失败，请检查网络后重试。')
+      setMessage('提交失败：网络未连通或服务暂不可用，请稍后重试。')
     }
   }
 
@@ -481,198 +350,192 @@ function LoginForm() {
 
   if (status === 'sent') {
     return (
-      <div className="radar-done radar-form-slide" role="status" aria-live="polite">
-        <span className="radar-done-icon">
-          <CheckCircle2 size={22} />
+      <div className="lp-panel py-2" role="status" aria-live="polite">
+        <span className="flex h-11 w-11 items-center justify-center rounded-xl bg-[#002fa7]/10 text-[#002fa7]">
+          <CheckCircle2 size={22} aria-hidden="true" />
         </span>
-        <h2>{authMode === 'login' ? '登录成功' : '注册成功'}</h2>
-        <p>{message}</p>
-        <div className="radar-done-actions">
-          <Button
-            type="button"
-            onClick={() => {
-              setStatus('idle')
-              setMessage('')
-              setAccount('')
-              setPassword('')
-              setCode('')
-            }}
-            className="h-11 rounded-xl bg-[#615fff] px-4 text-sm font-medium text-white hover:bg-[#4f4dd8] transition-all duration-300 hover:shadow-[0_0_30px_rgba(97,95,255,0.4)]"
-          >
-            {authMode === 'login' ? '继续使用' : '去登录'}
-          </Button>
-        </div>
+        <h2
+          className="mt-4 text-[22px] font-bold"
+          style={{ fontFamily: 'var(--font-serif-sc), serif' }}
+        >
+          {authMode === 'login' ? '登录成功。' : '注册成功。'}
+        </h2>
+        <p className="mt-1.5 text-[13.5px] leading-relaxed text-[#5f5b52]">{message}</p>
+        <Button
+          type="button"
+          onClick={() => {
+            setStatus('idle')
+            setMessage('')
+            setAccount('')
+            setPassword('')
+            setCode('')
+          }}
+          className="mt-6 h-11 w-full cursor-pointer gap-2 rounded-xl bg-[#002fa7] text-[14px] font-semibold text-white transition-colors duration-200 hover:bg-[#00267f]"
+        >
+          {authMode === 'login' ? '继续使用' : '去登录'}
+          <ArrowRight size={16} aria-hidden="true" />
+        </Button>
       </div>
     )
   }
 
-  const getPlaceholder = () => {
-    switch (loginMethod) {
-      case 'phone-password': return '请输入手机号或账号'
-      case 'email-password': return '请输入邮箱地址'
-      case 'phone-code': return '请输入手机号'
-    }
-  }
+  const method = loginMethods.find((m) => m.id === loginMethod)!
+  const AccountIcon = method.accountIcon
 
-  const getAccountIcon = () => {
-    switch (loginMethod) {
-      case 'phone-password': return <User size={18} aria-hidden="true" />
-      case 'email-password': return <Mail size={18} aria-hidden="true" />
-      case 'phone-code': return <Phone size={18} aria-hidden="true" />
-    }
-  }
+  const fieldClass =
+    'h-12 rounded-xl border-[#e0dcd2] bg-[#faf9f6] text-[15px] text-[#1a1a17] caret-[#002fa7] placeholder:text-[#7d786d] focus-visible:border-[#002fa7]/70 focus-visible:ring-[#002fa7]/15'
 
   return (
-    <div className="radar-form-slide">
-      <div className="radar-mode-tabs">
-        <button
-          className={`radar-mode-tab ${authMode === 'login' ? 'active' : ''}`}
-          onClick={() => {
-            setAuthMode('login')
-            setMessage('')
-          }}
-        >
-          登录
-        </button>
-        <button
-          className={`radar-mode-tab ${authMode === 'register' ? 'active' : ''}`}
-          onClick={() => {
-            setAuthMode('register')
-            setMessage('')
-          }}
-        >
-          注册
-        </button>
-      </div>
+    <div className="lp-panel">
+      <h2
+        className="text-[26px] font-bold leading-tight"
+        style={{ fontFamily: 'var(--font-serif-sc), serif' }}
+      >
+        {authMode === 'login' ? '欢迎回来。' : '创建你的雷达。'}
+      </h2>
+      <p className="mt-1.5 text-[13.5px] text-[#5f5b52]">
+        {authMode === 'login' ? '登录后同步你的收藏与提醒。' : '注册后立即开始追踪所有截止时间。'}
+      </p>
 
-            <form className="radar-form" onSubmit={handleFormSubmit} noValidate>
-        <div className="radar-method-selector">
-          {loginMethods.map((method) => {
-            const Icon = method.icon
-            const active = loginMethod === method.id
-
-            return (
-              <div key={method.id} className={`radar-method ${active ? 'is-open' : ''}`}>
-                <button
-                  type="button"
-                  className={`radar-method-btn ${active ? 'active' : ''}`}
-                  aria-expanded={active}
-                  aria-controls={`method-panel-${method.id}`}
-                  onClick={() => {
-                    setLoginMethod(method.id)
-                    setMessage('')
-                    setStatus('idle')
-                    setAccount('')
-                    setPassword('')
-                    setCode('')
-                  }}
-                >
-                  <span className="radar-method-left">
-                    <Icon className="radar-method-icon" />
-                    <span className="radar-method-text">{method.label}</span>
-                  </span>
-                  <ChevronDown className="radar-method-arrow" />
-                </button>
-
-                {active && (
-                  <div id={`method-panel-${method.id}`} className="radar-method-panel">
-                    <div className="radar-field">
-                      <div className="radar-input-glow" />
-                      <div className="radar-field-icon">{getAccountIcon()}</div>
-                      <Input
-                        id="account"
-                        name="account"
-                        type={method.id === 'email-password' ? 'email' : 'text'}
-                        inputMode={method.id === 'phone-code' ? 'tel' : 'text'}
-                        autoComplete="username"
-                        placeholder={getPlaceholder()}
-                        value={account}
-                        disabled={sending}
-                        aria-invalid={status === 'error'}
-                        aria-describedby={message ? 'login-message' : undefined}
-                        onChange={(event) => {
-                          setAccount(event.target.value)
-                          if (status === 'error') {
-                            setStatus('idle')
-                            setMessage('')
-                          }
-                        }}
-                        className="h-12 rounded-xl border-white/10 bg-white/[0.04] pl-11 text-base text-white placeholder:text-slate-500 focus-visible:border-[#615fff]/60 focus-visible:ring-[#615fff]/25 transition-all duration-300"
-                      />
-                    </div>
-
-                    {(method.id === 'phone-password' || method.id === 'email-password') && (
-                      <div className="radar-field">
-                        <div className="radar-input-glow" />
-                        <Lock className="radar-field-icon" size={18} aria-hidden="true" />
-                        <Input
-                          id="password"
-                          name="password"
-                          type="password"
-                          autoComplete={authMode === 'login' ? 'current-password' : 'new-password'}
-                          placeholder={authMode === 'login' ? '请输入密码' : '请设置密码（至少6位）'}
-                          value={password}
-                          disabled={sending}
-                          onChange={(event) => {
-                            setPassword(event.target.value)
-                            if (status === 'error') {
-                              setStatus('idle')
-                              setMessage('')
-                            }
-                          }}
-                          className="h-12 rounded-xl border-white/10 bg-white/[0.04] pl-11 text-base text-white placeholder:text-slate-500 focus-visible:border-[#615fff]/60 focus-visible:ring-[#615fff]/25 transition-all duration-300"
-                        />
-                      </div>
-                    )}
-
-                    {method.id === 'phone-code' && (
-                      <div className="radar-field">
-                        <div className="radar-input-glow" />
-                        <ShieldCheck className="radar-field-icon" size={18} aria-hidden="true" />
-                        <Input
-                          id="code"
-                          name="code"
-                          type="text"
-                          inputMode="numeric"
-                          autoComplete="one-time-code"
-                          placeholder="请输入6位验证码"
-                          value={code}
-                          disabled={sending}
-                          maxLength={6}
-                          onChange={(event) => {
-                            setCode(event.target.value)
-                            if (status === 'error') {
-                              setStatus('idle')
-                              setMessage('')
-                            }
-                          }}
-                          className="h-12 rounded-xl border-white/10 bg-white/[0.04] pl-11 pr-24 text-base text-white placeholder:text-slate-500 focus-visible:border-[#615fff]/60 focus-visible:ring-[#615fff]/25 transition-all duration-300"
-                        />
-                        <button
-                          type="button"
-                          className="radar-code-btn"
-                          onClick={handleSendCode}
-                          disabled={codeCountdown > 0}
-                        >
-                          {codeCountdown > 0 ? `${codeCountdown}s` : '获取验证码'}
-                        </button>
-                      </div>
-                    )}
-                  </div>
-                )}
-              </div>
-            )
-          })}
+      <form onSubmit={handleFormSubmit} noValidate className="mt-7">
+        {/* 登录方式：编辑风下划线标签页 */}
+        <div className="flex gap-6 border-b border-[#ece8de]" role="group" aria-label="登录方式">
+          {loginMethods.map((m) => (
+            <button
+              key={m.id}
+              type="button"
+              aria-pressed={loginMethod === m.id}
+              onClick={() => {
+                setLoginMethod(m.id)
+                clearMessage()
+              }}
+              className={cn(
+                'relative -mb-px flex h-10 cursor-pointer items-center border-b-2 text-[13.5px] font-medium transition-colors duration-200 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#002fa7]/40',
+                loginMethod === m.id
+                  ? 'border-[#002fa7] text-[#002fa7]'
+                  : 'border-transparent text-[#7d786d] hover:text-[#1a1a17]',
+              )}
+            >
+              {m.label}
+            </button>
+          ))}
         </div>
 
+        <div className="mt-5 space-y-4">
+          {/* 账号字段 */}
+          <div>
+            <label htmlFor="account" className="mb-1.5 block text-[13px] font-medium text-[#5f5b52]">
+              {method.accountLabel}
+            </label>
+            <div className="relative">
+              <span
+                className="pointer-events-none absolute left-3.5 top-1/2 -translate-y-1/2 text-[#a09a8c]"
+                aria-hidden="true"
+              >
+                <AccountIcon size={16} />
+              </span>
+              <Input
+                id="account"
+                name="account"
+                type={loginMethod === 'email' ? 'email' : 'text'}
+                inputMode={loginMethod === 'code' ? 'tel' : 'text'}
+                autoComplete="username"
+                placeholder={method.accountPlaceholder}
+                value={account}
+                disabled={sending}
+                aria-invalid={status === 'error'}
+                aria-describedby={message ? 'login-message' : undefined}
+                onChange={(event) => {
+                  setAccount(event.target.value)
+                  clearMessage()
+                }}
+                className={cn(fieldClass, 'pl-10', loginMethod === 'code' && 'pr-28')}
+              />
+            </div>
+          </div>
+
+          {/* 密码字段（密码 / 邮箱两种方式） */}
+          {loginMethod !== 'code' && (
+            <div>
+              <label htmlFor="password" className="mb-1.5 block text-[13px] font-medium text-[#5f5b52]">
+                密码
+              </label>
+              <div className="relative">
+                <span
+                  className="pointer-events-none absolute left-3.5 top-1/2 -translate-y-1/2 text-[#a09a8c]"
+                  aria-hidden="true"
+                >
+                  <Lock size={16} />
+                </span>
+                <Input
+                  id="password"
+                  name="password"
+                  type="password"
+                  autoComplete={authMode === 'login' ? 'current-password' : 'new-password'}
+                  placeholder={authMode === 'login' ? '请输入密码' : '至少 6 位'}
+                  value={password}
+                  disabled={sending}
+                  onChange={(event) => {
+                    setPassword(event.target.value)
+                    clearMessage()
+                  }}
+                  className={cn(fieldClass, 'pl-10')}
+                />
+              </div>
+            </div>
+          )}
+
+          {/* 验证码字段（验证码方式） */}
+          {loginMethod === 'code' && (
+            <div>
+              <label htmlFor="code" className="mb-1.5 block text-[13px] font-medium text-[#5f5b52]">
+                验证码
+              </label>
+              <div className="relative">
+                <span
+                  className="pointer-events-none absolute left-3.5 top-1/2 -translate-y-1/2 text-[#a09a8c]"
+                  aria-hidden="true"
+                >
+                  <ShieldCheck size={16} />
+                </span>
+                <Input
+                  id="code"
+                  name="code"
+                  type="text"
+                  inputMode="numeric"
+                  autoComplete="one-time-code"
+                  placeholder="6 位数字"
+                  value={code}
+                  disabled={sending}
+                  maxLength={6}
+                  onChange={(event) => {
+                    setCode(event.target.value)
+                    clearMessage()
+                  }}
+                  className={cn(fieldClass, 'pl-10 pr-28')}
+                />
+                <button
+                  type="button"
+                  onClick={handleSendCode}
+                  disabled={codeCountdown > 0}
+                  className="absolute right-1.5 top-1/2 flex h-10 -translate-y-1/2 cursor-pointer items-center rounded-lg bg-[#002fa7]/8 px-3 text-[13px] font-medium text-[#002fa7] transition-colors duration-200 hover:bg-[#002fa7]/15 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#002fa7]/40 disabled:cursor-not-allowed disabled:opacity-50"
+                >
+                  {codeCountdown > 0 ? `${codeCountdown}s 后重发` : '获取验证码'}
+                </button>
+              </div>
+            </div>
+          )}
+        </div>
+
+        {/* 反馈信息：就近展示，点名问题与恢复方式 */}
         {message && (
           <p
             id="login-message"
-            className={status === 'error' ? 'radar-msg is-error' : 'radar-msg'}
             role="status"
             aria-live="polite"
+            className="mt-4 flex items-start gap-1.5 text-[13px] leading-relaxed text-[#b42318]"
           >
-            {status === 'error' && <AlertCircle size={14} aria-hidden="true" />}
+            <AlertCircle size={15} className="mt-0.5 shrink-0" aria-hidden="true" />
             {message}
           </p>
         )}
@@ -680,24 +543,39 @@ function LoginForm() {
         <Button
           type="submit"
           disabled={sending}
-          className="h-12 w-full gap-2 rounded-xl bg-[#615fff] text-[15px] font-medium text-white shadow-[0_16px_40px_-16px_rgba(97,95,255,0.9)] transition-all duration-300 hover:bg-[#4f4dd8] hover:shadow-[0_20px_50px_-16px_rgba(97,95,255,0.9),0_0_30px_rgba(97,95,255,0.3)] hover:-translate-y-0.5 disabled:cursor-not-allowed disabled:opacity-70 disabled:hover:translate-y-0 disabled:hover:shadow-[0_16px_40px_-16px_rgba(97,95,255,0.9)]"
+          className="mt-6 h-12 w-full cursor-pointer gap-2 rounded-xl bg-[#002fa7] text-[15px] font-semibold text-white transition-colors duration-200 hover:bg-[#00267f]"
         >
           {sending ? (
             <>
-              <Loader2 className="radar-spin" size={18} />
-              处理中...
+              <Loader2 size={17} className="lp-spin" aria-hidden="true" />
+              处理中…
             </>
           ) : (
             <>
-              {authMode === 'login' ? '登录' : '注册'}
-              <ArrowRight size={18} />
+              {authMode === 'login' ? '登录' : '创建账号'}
+              <ArrowRight size={17} aria-hidden="true" />
             </>
           )}
         </Button>
       </form>
 
-      <p className="radar-legal">
-        继续即表示你同意《服务条款》与《隐私政策》。我们只把这个信息用于登录和截止提醒。
+      {/* 登录 / 注册切换 */}
+      <p className="mt-5 text-[13.5px] text-[#5f5b52]">
+        {authMode === 'login' ? '还没有账号？' : '已有账号？'}
+        <button
+          type="button"
+          onClick={() => {
+            setAuthMode(authMode === 'login' ? 'register' : 'login')
+            clearMessage()
+          }}
+          className="ml-1 cursor-pointer font-semibold text-[#002fa7] underline-offset-4 transition-colors duration-200 hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#002fa7]/40"
+        >
+          {authMode === 'login' ? '立即注册' : '直接登录'}
+        </button>
+      </p>
+
+      <p className="mt-4 border-t border-[#ece8de] pt-4 text-[11.5px] leading-[1.7] text-[#7d786d]">
+        继续即表示你同意《服务条款》与《隐私政策》。我们只把你的信息用于登录和截止提醒。
       </p>
     </div>
   )
