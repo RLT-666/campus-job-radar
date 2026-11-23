@@ -29,12 +29,25 @@ const notoSerifSC = Noto_Serif_SC({
 export const metadata: Metadata = {
   title: "校招雷达 · 别再错过任何一个截止日期",
   description: "把分散在各校就业网、公众号与企业官网的校招信息收进一张时间线，截止前 3 天自动提醒。",
+  // PWA 清单与图标（W2 交付物：手机端可添加到桌面）
+  manifest: "/manifest.webmanifest",
+  icons: {
+    icon: "/icons/icon-192.png",
+    apple: "/icons/apple-touch-icon.png",
+  },
+  appleWebApp: {
+    capable: true,
+    statusBarStyle: "default",
+    title: "校招雷达",
+  },
 };
 
 export const viewport: Viewport = {
   width: "device-width",
   initialScale: 1,
   viewportFit: "cover",
+  // 浏览器 UI 主题色：克莱因蓝（与登录页/看板主色一致）
+  themeColor: "#002fa7",
 };
 
 export default function RootLayout({
@@ -44,7 +57,7 @@ export default function RootLayout({
 }) {
   return (
     <html
-      lang="en"
+      lang="zh-CN"
       className={`${geistSans.variable} ${geistMono.variable} ${manrope.variable} ${notoSerifSC.variable} h-full antialiased`}
     >
       <body className="min-h-full flex flex-col">{children}</body>
