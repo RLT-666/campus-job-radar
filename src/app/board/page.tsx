@@ -8,6 +8,9 @@
 // 埋点：创建卡片成功上报 create_application（props: channel/status，
 // 口径见 docx/analytics-events.md，事件表由 C 维护）。
 //
+// 详情抽屉：点击卡片右侧滑出，含完整字段、笔记乐观保存（失败回滚）、
+// 环节时间线（mock events，契约对齐后换 events 接口）与删除二次确认。
+//
 // 设计语言：产品页统一走「截止时刻表 · Editorial」
 // （纸面 #faf9f6 / 墨色 #1a1a17 / 克莱因蓝 #002fa7 / 琥珀仅作截止警示）。
 // 主色通过作用域内覆盖 --color-primary 实现，暂不动全局 shadcn 令牌，
@@ -19,13 +22,18 @@ import { useEffect, useReducer, useRef, useState } from 'react'
 import { Loader2, Plus } from 'lucide-react'
 
 import { BoardColumn } from '@/components/board/BoardColumn'
+import { ApplicationDrawer } from '@/components/board/ApplicationDrawer'
 import { CreateApplicationModal } from '@/components/board/CreateApplicationModal'
 import {
   createApplication,
+  deleteApplication,
+  fetchApplicationEvents,
   fetchBoardApplications,
+  saveApplicationNotes,
 } from '@/components/board/board-api'
 import { boardReducer } from '@/components/board/board-reducer'
 import { BOARD_COLUMNS } from '@/components/board/status'
+import type { TimelineEvent } from '@/components/board/mock-events'
 import { Button } from '@/components/ui/Button'
 import { track } from '@/lib/analytics'
 import type { Application } from '@/mocks/applications'
@@ -39,6 +47,15 @@ export default function BoardPage() {
   const [applications, dispatch] = useReducer(boardReducer, [])
   const [loading, setLoading] = useState(true)
   const [modalOpen, setModalOpen] = useState(false)
+  // 详情抽屉：只存选中 id，展示对象从列表派生（笔记/状态变更即时反映，无副本漂移）
+  const [selectedId, setSelectedId] = useState<string | null>(null)
+  const selected =
+    applications.find((app) => app.id === selectedId) ?? null
+  // 时间线：随选中卡片拉取（契约对齐后由 events 接口提供）
+  const [events, setEvents] = useState<TimelineEvent[]>([])
+  const [eventsLoading, setEventsLoading] = useState(false)
+  // 删除进行中：防止确认框重复提交
+  const [deleting, setDeleting] = useState(false)
   const [toast, setToast] = useState<{ message: string; tone: ToastTone } | null>(
     null,
   )
@@ -87,9 +104,65 @@ export default function BoardPage() {
     }
   }
 
-  // 点击卡片：打开详情抽屉（W2 任务，下一步接入 ApplicationDrawer）
-  function handleOpenCard(_application: Application) {
-    // TODO(W2): setSelected(application)
+  // 打开详情抽屉：先置加载态再记选中 id（加载态在事件处理器中设置，
+  // 避免 effect 体内同步 setState 触发 react-hooks/set-state-in-effect）
+  function handleOpenCard(application: Application) {
+    setEventsLoading(true)
+    setSelectedId(application.id)
+  }
+
+  // 关闭抽屉：清空选中与时间线缓存，保证下次打开不闪旧数据
+  function handleCloseDrawer() {
+    setSelectedId(null)
+    setEvents([])
+    setEventsLoading(false)
+  }
+
+  // 选中卡片变化时拉取环节时间线（倒序由适配层保证）。
+  // 仅异步回调中 setState；selectedId 为 null 时直接返回（此时抽屉已关）
+  useEffect(() => {
+    if (!selectedId) return
+    let cancelled = false
+    fetchApplicationEvents(selectedId)
+      .then((list) => {
+        if (!cancelled) setEvents(list)
+      })
+      .catch(() => {
+        if (!cancelled) showToast('时间线加载失败', 'error')
+      })
+      .finally(() => {
+        if (!cancelled) setEventsLoading(false)
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [selectedId])
+
+  // 保存笔记（乐观更新）：
+  // 先派发 UPDATE_NOTES 立即改本地列表 → 再调适配层 → 失败回滚旧值并提示。
+  // 这是《落地方案》难点一「乐观更新 + 失败回滚」在笔记场景的同一套编排。
+  function handleSaveNotes(id: string, notes: string) {
+    const previous = applications.find((app) => app.id === id)?.notes ?? ''
+    dispatch({ type: 'UPDATE_NOTES', id, notes })
+    saveApplicationNotes(id, notes)
+      .then(() => showToast('笔记已保存'))
+      .catch(() => {
+        dispatch({ type: 'UPDATE_NOTES', id, notes: previous })
+        showToast('保存失败，已还原', 'error')
+      })
+  }
+
+  // 删除卡片：非乐观（有二次确认），适配层成功后移除并关闭抽屉
+  function handleDelete(id: string) {
+    setDeleting(true)
+    deleteApplication(id)
+      .then(() => {
+        dispatch({ type: 'DELETE', id })
+        handleCloseDrawer()
+        showToast('投递卡片已删除')
+      })
+      .catch(() => showToast('删除失败，请稍后重试', 'error'))
+      .finally(() => setDeleting(false))
   }
 
   // 按列配置对当前卡片分组（列配置来自 status.ts 单一数据源）
@@ -153,6 +226,19 @@ export default function BoardPage() {
         open={modalOpen}
         onOpenChange={setModalOpen}
         onSubmit={handleCreate}
+      />
+
+      {/* 卡片详情抽屉 */}
+      <ApplicationDrawer
+        application={selected}
+        onOpenChange={(open) => {
+          if (!open) handleCloseDrawer()
+        }}
+        onSaveNotes={handleSaveNotes}
+        onDelete={handleDelete}
+        events={events}
+        eventsLoading={eventsLoading}
+        deleting={deleting}
       />
 
       {/* 轻提示：底部居中，读屏可感知 */}
