@@ -8,22 +8,17 @@ import {
   applicationFormSchema,
   type ApplicationFormValues,
 } from '@/app/board/application-form.schema'
+import { APPLICATION_STATUSES, STATUS_LABELS } from '@/components/board/status'
 
 // 渠道选项：与 schema 里的中文枚举取值一致
 const CHANNEL_OPTIONS = ['官网', '内推', '宣讲会', '其他'] as const
 
-// 状态枚举 -> 中文标签，下拉只展示中文，提交值仍存英文枚举，与 mock/契约对齐
-const STATUS_OPTIONS: { value: ApplicationFormValues['status']; label: string }[] = [
-  { value: 'wishlist', label: '意向' },
-  { value: 'applied', label: '已投递' },
-  { value: 'written', label: '笔试/测评' },
-  { value: 'interview_1', label: '一面' },
-  { value: 'interview_2', label: '二面' },
-  { value: 'interview_3', label: '三面' },
-  { value: 'hr', label: 'HR 面' },
-  { value: 'offer', label: 'Offer' },
-  { value: 'rejected', label: '未通过' },
-]
+// 状态下拉选项：从状态机单一数据源推导（枚举值 + 中文标签），
+// 下拉只展示中文，提交值仍存英文枚举，与 mock/契约对齐
+const STATUS_OPTIONS = APPLICATION_STATUSES.map((value) => ({
+  value,
+  label: STATUS_LABELS[value],
+}))
 
 interface ApplicationFormProps {
   // 校验通过后的回调：由看板层实现本地新增卡片
