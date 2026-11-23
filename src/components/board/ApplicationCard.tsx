@@ -1,51 +1,16 @@
 // 投递卡片：看板列内的单条投递展示。
-// 设计语言遵循「截止时刻表 · Editorial」：
-//   纸面白底卡片 + 细分隔线 + 墨色正文；
-//   截止临近（≤3 天）用琥珀色——全站唯一暖色信号，与登录页时刻表一致；
-//   Offer 态用克莱因蓝点缀，其余状态保持中性，避免多色噪点。
+// 设计语言遵循「截止时刻表 · Editorial」：白底卡片 + 细分隔线 + 墨色正文；
+// Offer 态用克莱因蓝边框点缀，其余状态中性；截止标签复用 DeadlineBadge。
 'use client'
-
-import { CalendarClock } from 'lucide-react'
 
 import { cn } from '@/lib/utils'
 import type { Application } from '@/mocks/applications'
-import { daysUntilDeadline } from './status'
+import { DeadlineBadge } from './DeadlineBadge'
 
 interface ApplicationCardProps {
   application: Application
   /** 点击卡片打开详情抽屉 */
   onOpen: (application: Application) => void
-}
-
-/** 截止时间标签：无截止不展示；已截止灰色；≤3 天琥珀警示；其余中性倒计时 */
-function DeadlineBadge({ deadline }: { deadline?: string }) {
-  const days = daysUntilDeadline(deadline)
-  if (days === null) return null
-
-  if (days < 0) {
-    return (
-      <span className="inline-flex items-center gap-1 rounded-full border border-[#e0dcd2] px-2 py-0.5 text-[11px] font-medium text-[#7d786d]">
-        <CalendarClock size={12} aria-hidden="true" />
-        已截止
-      </span>
-    )
-  }
-
-  if (days <= 3) {
-    return (
-      <span className="inline-flex items-center gap-1 rounded-full border border-[#f2d9b6] bg-[#fdf6ec] px-2 py-0.5 text-[11px] font-semibold tabular-nums text-[#b45309]">
-        <CalendarClock size={12} aria-hidden="true" />
-        {days === 0 ? '今天截止' : `D-${days}`}
-      </span>
-    )
-  }
-
-  return (
-    <span className="inline-flex items-center gap-1 rounded-full border border-[#ece8de] px-2 py-0.5 text-[11px] font-medium tabular-nums text-[#7d786d]">
-      <CalendarClock size={12} aria-hidden="true" />
-      D-{days}
-    </span>
-  )
 }
 
 export function ApplicationCard({ application, onOpen }: ApplicationCardProps) {
