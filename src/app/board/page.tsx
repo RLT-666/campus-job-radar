@@ -19,9 +19,19 @@
 'use client'
 
 import { useEffect, useReducer, useRef, useState } from 'react'
+import {
+  DndContext,
+  KeyboardSensor,
+  PointerSensor,
+  useSensor,
+  useSensors,
+  type DragEndEvent,
+  type DragOverEvent,
+  type DragStartEvent,
+} from '@dnd-kit/core'
 import { Loader2, Plus } from 'lucide-react'
 
-import { BoardColumn } from '@/components/board/BoardColumn'
+import { BoardColumn, type DropHighlight } from '@/components/board/BoardColumn'
 import { ApplicationDrawer } from '@/components/board/ApplicationDrawer'
 import { CreateApplicationModal } from '@/components/board/CreateApplicationModal'
 import {
@@ -29,10 +39,15 @@ import {
   deleteApplication,
   fetchApplicationEvents,
   fetchBoardApplications,
+  moveApplicationStatus,
   saveApplicationNotes,
 } from '@/components/board/board-api'
 import { boardReducer } from '@/components/board/board-reducer'
-import { BOARD_COLUMNS } from '@/components/board/status'
+import {
+  BOARD_COLUMNS,
+  canTransition,
+  resolveTargetStatus,
+} from '@/components/board/status'
 import type { TimelineEvent } from '@/components/board/mock-events'
 import { Button } from '@/components/ui/Button'
 import { track } from '@/lib/analytics'
@@ -56,11 +71,23 @@ export default function BoardPage() {
   const [eventsLoading, setEventsLoading] = useState(false)
   // 删除进行中：防止确认框重复提交
   const [deleting, setDeleting] = useState(false)
+  // 拖拽过程状态：activeId 为拖动中卡片 id；overColumnKey + overValid
+  // 决定列高亮（合法=蓝、非法=红、无=不变）
+  const [activeId, setActiveId] = useState<string | null>(null)
+  const [overColumnKey, setOverColumnKey] = useState<string | null>(null)
+  const [overValid, setOverValid] = useState(false)
   const [toast, setToast] = useState<{ message: string; tone: ToastTone } | null>(
     null,
   )
   // 轻提示自动消失计时器：重复触发时重置，避免多条提示互相顶掉
   const toastTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
+
+  // 拖拽传感器：指针（鼠标/触摸/笔）设 6px 激活距离防误触；
+  // 键盘传感器支持手柄聚焦后空格提起、方向键移动、空格放下
+  const sensors = useSensors(
+    useSensor(PointerSensor, { activationConstraint: { distance: 6 } }),
+    useSensor(KeyboardSensor),
+  )
 
   function showToast(message: string, tone: ToastTone = 'success') {
     if (toastTimer.current) clearTimeout(toastTimer.current)
@@ -165,6 +192,76 @@ export default function BoardPage() {
       .finally(() => setDeleting(false))
   }
 
+  // ---------- 拖拽编排（对应《落地方案》难点一：看板数据一致性） ----------
+
+  function handleDragStart(event: DragStartEvent) {
+    setActiveId(String(event.active.id))
+  }
+
+  // 悬停过程实时校验落点合法性：决定列高亮（蓝=可放、红=不可放）
+  function handleDragOver(event: DragOverEvent) {
+    if (!event.over || !activeId) {
+      setOverColumnKey(null)
+      setOverValid(false)
+      return
+    }
+    const column = BOARD_COLUMNS.find((col) => col.key === event.over!.id)
+    const app = applications.find((a) => a.id === activeId)
+    if (!column || !app) {
+      setOverColumnKey(null)
+      setOverValid(false)
+      return
+    }
+    setOverColumnKey(column.key)
+    const to = resolveTargetStatus(app.status, column)
+    setOverValid(
+      to !== null && to !== app.status && canTransition(app.status, to),
+    )
+  }
+
+  // 松手：解析落点 → 状态机校验 → 乐观更新 + 适配层调用 → 失败回滚
+  function handleDragEnd(event: DragEndEvent) {
+    const overKey = event.over ? String(event.over.id) : null
+    setActiveId(null)
+    setOverColumnKey(null)
+    setOverValid(false)
+
+    // 未落在任何列上：放弃本次拖动
+    if (!overKey) return
+    const app = applications.find((a) => a.id === event.active.id)
+    const column = BOARD_COLUMNS.find((col) => col.key === overKey)
+    if (!app || !column) return
+
+    const to = resolveTargetStatus(app.status, column)
+    // 放回原列/原状态：静默无操作（不打扰）
+    if (to === null || to === app.status) return
+    // 状态机不允许的流转：明确提示，不静默放行（脏数据防线）
+    if (!canTransition(app.status, to)) {
+      showToast(`不允许流转到「${column.title}」`, 'error')
+      return
+    }
+
+    const from = app.status
+    // 乐观更新：先改本地 UI，再调适配层（W2 验收：拖动后服务端状态一致）
+    dispatch({ type: 'MOVE', id: app.id, from, to })
+    moveApplicationStatus(app.id, from, to)
+      .then(() => {
+        // 埋点契约（analytics-events.md）：move_status 成功上报 from/to
+        void track('move_status', { from, to })
+      })
+      .catch(() => {
+        // 失败回滚本地状态并提示（W2 验收：断网拖动可回滚）
+        dispatch({ type: 'ROLLBACK', id: app.id, previousStatus: from })
+        showToast('状态流转失败，已回滚', 'error')
+      })
+  }
+
+  function handleDragCancel() {
+    setActiveId(null)
+    setOverColumnKey(null)
+    setOverValid(false)
+  }
+
   // 按列配置对当前卡片分组（列配置来自 status.ts 单一数据源）
   const columns = BOARD_COLUMNS.map((col) => ({
     ...col,
@@ -207,17 +304,38 @@ export default function BoardPage() {
           </div>
         ) : (
           /* 列容器：窄屏单列纵向堆叠，桌面 2/3 列、超宽 6 列，
-             保证 375px 无横向滚动（移动端验收标准） */
-          <div className="grid grid-cols-1 gap-5 md:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-6">
-            {columns.map((col) => (
-              <BoardColumn
-                key={col.key}
-                column={col}
-                applications={col.items}
-                onCardOpen={handleOpenCard}
-              />
-            ))}
-          </div>
+             保证 375px 无横向滚动（移动端验收标准）。
+             拖拽上下文包裹整个网格：卡片跨列流转在此编排 */
+          <DndContext
+            sensors={sensors}
+            onDragStart={handleDragStart}
+            onDragOver={handleDragOver}
+            onDragEnd={handleDragEnd}
+            onDragCancel={handleDragCancel}
+          >
+            <div className="grid grid-cols-1 gap-5 md:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-6">
+              {columns.map((col) => {
+                // 仅拖动中的卡片所在指针悬停的列需要高亮；合法/非法由状态机判定
+                const dropHighlight: DropHighlight =
+                  activeId === null
+                    ? 'none'
+                    : overColumnKey === col.key
+                      ? overValid
+                        ? 'valid'
+                        : 'invalid'
+                      : 'none'
+                return (
+                  <BoardColumn
+                    key={col.key}
+                    column={col}
+                    applications={col.items}
+                    onCardOpen={handleOpenCard}
+                    dropHighlight={dropHighlight}
+                  />
+                )
+              })}
+            </div>
+          </DndContext>
         )}
       </div>
 

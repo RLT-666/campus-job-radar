@@ -93,6 +93,32 @@ export function getColumnByStatus(status: ApplicationStatus): BoardColumnConfig 
   return column
 }
 
+/**
+ * 解析拖拽落点对应的目标状态：
+ *   - 单状态列 → 该列状态；
+ *   - 「面试中」列（多状态）→ 卡片已在面试环节时返回 null（同列移动=无变化），
+ *     否则进入一面（interview_1，作为进入面试环节的默认入口）；
+ *   - 返回 null 表示落点无效或无状态变化。
+ */
+export function resolveTargetStatus(
+  current: ApplicationStatus,
+  column: BoardColumnConfig,
+): ApplicationStatus | null {
+  if (column.statuses.length === 1) {
+    return column.statuses[0]
+  }
+  // 多状态列（面试中）：已在列内则无变化，否则默认进一面
+  return column.statuses.includes(current) ? null : 'interview_1'
+}
+
+/** 校验状态流转是否被状态机允许（拖拽落点合法性判断的单一入口） */
+export function canTransition(
+  from: ApplicationStatus,
+  to: ApplicationStatus,
+): boolean {
+  return NEXT_STATUSES[from].includes(to)
+}
+
 // ---------- 截止时间解析 ----------
 // 本地数据截止时间存在多种格式（date 控件 yyyy-mm-dd、mock 的 yyyy-mm-dd HH:mm、
 // 后端 timestamptz 的 ISO 串），统一在此解析，返回 null 表示无效。

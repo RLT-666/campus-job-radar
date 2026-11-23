@@ -1,8 +1,15 @@
-// boardReducer 单元测试：覆盖乐观更新与回滚的全部转换分支
+// boardReducer 与状态机辅助函数的单元测试：
+// 覆盖乐观更新/回滚的全部转换分支与拖拽落点解析
 // 纯函数测试不依赖 DOM，直接跑在 Node 环境（vitest 默认环境即可）
 import { describe, expect, it } from 'vitest'
 import type { Application } from '@/mocks/applications'
 import { boardReducer } from './board-reducer'
+import {
+  BOARD_COLUMNS,
+  canTransition,
+  resolveTargetStatus,
+  type BoardColumnConfig,
+} from './status'
 
 /** 构造测试用卡片 */
 function makeApp(id: string, status: Application['status']): Application {
@@ -78,5 +85,47 @@ describe('boardReducer', () => {
       id: 'a',
     })
     expect(state.map((app) => app.id)).toEqual(['b'])
+  })
+})
+
+// ---------- 状态机与拖拽落点解析 ----------
+describe('resolveTargetStatus', () => {
+  const interviewColumn = BOARD_COLUMNS.find((c) => c.key === 'interview')!
+
+  function columnOf(key: string): BoardColumnConfig {
+    return BOARD_COLUMNS.find((c) => c.key === key)!
+  }
+
+  it('单状态列：返回该列状态', () => {
+    expect(resolveTargetStatus('wishlist', columnOf('applied'))).toBe('applied')
+    expect(resolveTargetStatus('applied', columnOf('offer'))).toBe('offer')
+  })
+
+  it('面试中列：卡片不在面试环节时默认进入一面', () => {
+    expect(resolveTargetStatus('applied', interviewColumn)).toBe('interview_1')
+  })
+
+  it('面试中列：卡片已在面试环节时返回 null（同列移动无变化）', () => {
+    expect(resolveTargetStatus('interview_2', interviewColumn)).toBeNull()
+    expect(resolveTargetStatus('hr', interviewColumn)).toBeNull()
+  })
+})
+
+describe('canTransition', () => {
+  it('允许正常链路的向后流转', () => {
+    expect(canTransition('wishlist', 'applied')).toBe(true)
+    expect(canTransition('applied', 'written')).toBe(true)
+    expect(canTransition('interview_1', 'interview_2')).toBe(true)
+    expect(canTransition('hr', 'offer')).toBe(true)
+  })
+
+  it('允许被拒后复活回意向', () => {
+    expect(canTransition('rejected', 'wishlist')).toBe(true)
+  })
+
+  it('拒绝终态转出与非法跳跃', () => {
+    expect(canTransition('offer', 'applied')).toBe(false)
+    expect(canTransition('offer', 'rejected')).toBe(false)
+    expect(canTransition('wishlist', 'offer')).toBe(false) // 不可跨环节直达
   })
 })
