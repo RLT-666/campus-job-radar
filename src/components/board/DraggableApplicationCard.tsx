@@ -50,7 +50,7 @@ export function DraggableApplicationCard({
             {...listeners}
             aria-label={`拖动「${application.company}」卡片`}
             style={{ touchAction: 'none' }}
-            className="flex size-6 cursor-grab items-center justify-center rounded-md text-[#a09a8c] transition-colors duration-200 hover:bg-[#f3f1ea] hover:text-[#1a1a17] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#002fa7]/40 active:cursor-grabbing"
+            className="flex size-6 cursor-grab items-center justify-center rounded-md text-[#5c6579] transition-colors duration-200 hover:bg-white/10 hover:text-[#e8ecf6] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#3d6bff]/50 active:cursor-grabbing"
           >
             <GripVertical size={14} aria-hidden="true" />
           </button>
