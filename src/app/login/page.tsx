@@ -1,7 +1,7 @@
 'use client'
 
 import { Suspense, useEffect, useMemo, useState, type FormEvent } from 'react'
-import { useSearchParams } from 'next/navigation'
+import { useRouter, useSearchParams } from 'next/navigation'
 import {
   AlertCircle,
   ArrowRight,
@@ -12,12 +12,16 @@ import {
   Mail,
   Radar,
   ShieldCheck,
-  Smartphone,
-  User,
 } from 'lucide-react'
 
 import { Button } from '@/components/ui/Button'
 import { Input } from '@/components/ui/Input'
+import {
+  sendEmailCode,
+  signInWithPassword,
+  signUpWithPassword,
+  verifyEmailCode,
+} from '@/lib/auth/client'
 import { cn } from '@/lib/utils'
 
 /* ============================================================
@@ -81,15 +85,7 @@ const lateInitialSeconds = 3 * 86400 + 2 * 3600 + 41 * 60 + 9
 
 type Status = 'idle' | 'sending' | 'sent' | 'error'
 type AuthMode = 'login' | 'register'
-type LoginMethod = 'password' | 'email' | 'code'
-
-/**
- * TODO(成员 李向)：替换为 Supabase 的 sendMagicLink。
- * redirectTo 已在页内做过站内校验，可直接透传。
- */
-async function sendMagicLink(_account: string, _redirectTo: string): Promise<void> {
-  await new Promise((resolve) => setTimeout(resolve, 800))
-}
+type LoginMethod = 'password' | 'code'
 
 export default function LoginPage() {
   return (
@@ -223,38 +219,32 @@ function Timetable() {
   )
 }
 
-/* 三种登录方式：与既有产品能力一一对应 */
+/* 两种登录方式：邮箱密码、邮箱验证码（均为 Supabase Auth 原生能力） */
 const loginMethods: {
   id: LoginMethod
   label: string
   accountLabel: string
-  accountIcon: typeof User
+  accountIcon: typeof Mail
   accountPlaceholder: string
 }[] = [
   {
     id: 'password',
     label: '密码登录',
-    accountLabel: '手机号 / 账号',
-    accountIcon: User,
-    accountPlaceholder: '手机号或账号',
-  },
-  {
-    id: 'email',
-    label: '邮箱登录',
     accountLabel: '邮箱',
     accountIcon: Mail,
-    accountPlaceholder: '请输入邮箱地址',
+    accountPlaceholder: 'you@example.com',
   },
   {
     id: 'code',
-    label: '验证码登录',
-    accountLabel: '手机号',
-    accountIcon: Smartphone,
-    accountPlaceholder: '请输入手机号',
+    label: '邮箱验证码',
+    accountLabel: '邮箱',
+    accountIcon: Mail,
+    accountPlaceholder: 'you@example.com',
   },
 ]
 
 function LoginForm() {
+  const router = useRouter()
   const searchParams = useSearchParams()
   const [authMode, setAuthMode] = useState<AuthMode>('login')
   const [loginMethod, setLoginMethod] = useState<LoginMethod>('password')
@@ -288,20 +278,14 @@ function LoginForm() {
   }
 
   function validate(): string | null {
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(account.trim())) {
+      return '邮箱格式不对：请填写完整的邮箱地址，例如 you@example.com。'
+    }
     if (loginMethod === 'code') {
-      if (account.replace(/\D/g, '').length !== 11) {
-        return '手机号格式不对：请输入 11 位大陆手机号。'
-      }
       if (code.length !== 6) {
-        return '验证码应为 6 位数字，请核对短信后再提交。'
+        return '验证码应为 6 位数字，请核对邮件后再提交。'
       }
       return null
-    }
-    if (!account.trim()) {
-      return '请先填写账号信息。'
-    }
-    if (loginMethod === 'email' && !account.includes('@')) {
-      return '邮箱格式不对：请填写包含 @ 的完整邮箱。'
     }
     if (!password) {
       return '请输入密码后再提交。'
@@ -312,13 +296,23 @@ function LoginForm() {
     return null
   }
 
-  const handleSendCode = () => {
-    if (account.replace(/\D/g, '').length !== 11) {
+  const handleSendCode = async () => {
+    const email = account.trim()
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
       setStatus('error')
-      setMessage('手机号格式不对：请输入 11 位大陆手机号后再获取验证码。')
+      setMessage('邮箱格式不对：请填写完整的邮箱地址后再获取验证码。')
       return
     }
-    setCodeCountdown(60)
+    setStatus('sending')
+    setMessage('')
+    try {
+      await sendEmailCode(email, authMode === 'register')
+      setCodeCountdown(60)
+      setStatus('idle')
+    } catch (error) {
+      setStatus('error')
+      setMessage(error instanceof Error ? error.message : '验证码发送失败，请稍后重试。')
+    }
   }
 
   async function handleSubmit() {
@@ -333,12 +327,25 @@ function LoginForm() {
     setMessage('')
 
     try {
-      await sendMagicLink(account, nextPath)
-      setStatus('sent')
-      setMessage(`操作成功！欢迎${authMode === 'login' ? '登录' : '注册'}校招雷达。`)
-    } catch {
+      if (loginMethod === 'code') {
+        await verifyEmailCode(account.trim(), code)
+      } else if (authMode === 'register') {
+        const { needsEmailConfirm } = await signUpWithPassword(account.trim(), password)
+        if (needsEmailConfirm) {
+          setStatus('sent')
+          setMessage('注册成功：请到邮箱点击确认链接，或改用“邮箱验证码”直接登录。')
+          return
+        }
+      } else {
+        await signInWithPassword(account.trim(), password)
+      }
+
+      // 会话已写入 Cookie，回跳原目标路径；refresh 让服务端重新判定守卫
+      router.replace(nextPath)
+      router.refresh()
+    } catch (error) {
       setStatus('error')
-      setMessage('提交失败：网络未连通或服务暂不可用，请稍后重试。')
+      setMessage(error instanceof Error ? error.message : '提交失败：网络未连通或服务暂不可用，请稍后重试。')
     }
   }
 
@@ -358,21 +365,22 @@ function LoginForm() {
           className="mt-4 text-[22px] font-bold"
           style={{ fontFamily: 'var(--font-serif-sc), serif' }}
         >
-          {authMode === 'login' ? '登录成功。' : '注册成功。'}
+          查收邮件。
         </h2>
         <p className="mt-1.5 text-[13.5px] leading-relaxed text-[#5f5b52]">{message}</p>
         <Button
           type="button"
           onClick={() => {
+            setAuthMode('login')
+            setLoginMethod('code')
             setStatus('idle')
             setMessage('')
-            setAccount('')
             setPassword('')
             setCode('')
           }}
           className="mt-6 h-11 w-full cursor-pointer gap-2 rounded-xl bg-[#002fa7] text-[14px] font-semibold text-white transition-colors duration-200 hover:bg-[#00267f]"
         >
-          {authMode === 'login' ? '继续使用' : '去登录'}
+          用邮箱验证码登录
           <ArrowRight size={16} aria-hidden="true" />
         </Button>
       </div>
@@ -437,9 +445,8 @@ function LoginForm() {
               <Input
                 id="account"
                 name="account"
-                type={loginMethod === 'email' ? 'email' : 'text'}
-                inputMode={loginMethod === 'code' ? 'tel' : 'text'}
-                autoComplete="username"
+                type="email"
+                autoComplete="email"
                 placeholder={method.accountPlaceholder}
                 value={account}
                 disabled={sending}
@@ -449,7 +456,7 @@ function LoginForm() {
                   setAccount(event.target.value)
                   clearMessage()
                 }}
-                className={cn(fieldClass, 'pl-10', loginMethod === 'code' && 'pr-28')}
+                className={cn(fieldClass, 'pl-10')}
               />
             </div>
           </div>
@@ -517,7 +524,7 @@ function LoginForm() {
                 <button
                   type="button"
                   onClick={handleSendCode}
-                  disabled={codeCountdown > 0}
+                  disabled={codeCountdown > 0 || sending}
                   className="absolute right-1.5 top-1/2 flex h-10 -translate-y-1/2 cursor-pointer items-center rounded-lg bg-[#002fa7]/8 px-3 text-[13px] font-medium text-[#002fa7] transition-colors duration-200 hover:bg-[#002fa7]/15 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#002fa7]/40 disabled:cursor-not-allowed disabled:opacity-50"
                 >
                   {codeCountdown > 0 ? `${codeCountdown}s 后重发` : '获取验证码'}
