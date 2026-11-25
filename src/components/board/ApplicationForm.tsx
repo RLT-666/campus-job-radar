@@ -75,7 +75,7 @@ export function ApplicationForm({ onSubmit }: ApplicationFormProps) {
   }
 
   return (
-    <form onSubmit={handleSubmit} className="flex flex-col gap-4">
+    <form onSubmit={handleSubmit} className="flex flex-col gap-4 text-[#e8ecf6]">
       {/* 公司（必填） */}
       <div className="flex flex-col gap-1.5">
         <label htmlFor="company" className="text-sm font-medium">公司</label>
@@ -107,7 +107,7 @@ export function ApplicationForm({ onSubmit }: ApplicationFormProps) {
           id="channel"
           value={form.channel}
           onChange={(e) => update('channel', e.target.value)}
-          className="h-8 w-full rounded-lg border border-input bg-transparent px-2 text-sm outline-none"
+          className="h-9 w-full rounded-lg border border-white/15 bg-white/[0.05] px-2 text-sm text-[#e8ecf6] outline-none transition-colors duration-150 focus-visible:border-[#3d6bff]/60"
         >
           {CHANNEL_OPTIONS.map((ch) => (
             <option key={ch} value={ch}>{ch}</option>
@@ -122,7 +122,7 @@ export function ApplicationForm({ onSubmit }: ApplicationFormProps) {
           id="status"
           value={form.status}
           onChange={(e) => update('status', e.target.value)}
-          className="h-8 w-full rounded-lg border border-input bg-transparent px-2 text-sm outline-none"
+          className="h-9 w-full rounded-lg border border-white/15 bg-white/[0.05] px-2 text-sm text-[#e8ecf6] outline-none transition-colors duration-150 focus-visible:border-[#3d6bff]/60"
         >
           {STATUS_OPTIONS.map((opt) => (
             <option key={opt.value} value={opt.value}>{opt.label}</option>
@@ -162,12 +162,17 @@ export function ApplicationForm({ onSubmit }: ApplicationFormProps) {
           value={form.notes}
           onChange={(e) => update('notes', e.target.value)}
           placeholder="补充笔记、面试反馈等"
-          className="w-full min-w-0 rounded-lg border border-input bg-transparent px-2.5 py-1.5 text-sm outline-none"
+          className="w-full min-w-0 rounded-lg border border-white/15 bg-white/[0.05] px-2.5 py-1.5 text-sm text-[#e8ecf6] outline-none transition-colors duration-150 placeholder:text-[#5c6579] focus-visible:border-[#3d6bff]/60"
         />
         {errors.notes && <p className="text-sm text-destructive">{errors.notes}</p>}
       </div>
 
-      <Button type="submit" className="w-full">提交卡片</Button>
+      <Button
+        type="submit"
+        className="h-10 w-full bg-gradient-to-br from-[#2b5cff] via-[#3d6bff] to-[#6f96ff] text-[13.5px] font-semibold text-white shadow-[0_6px_24px_-6px_rgba(61,107,255,0.55)] hover:brightness-110"
+      >
+        提交卡片
+      </Button>
     </form>
   )
 }
