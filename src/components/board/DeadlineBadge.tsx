@@ -14,7 +14,7 @@ export function DeadlineBadge({ deadline }: { deadline?: string }) {
 
   if (days < 0) {
     return (
-      <span className="inline-flex items-center gap-1 rounded-full border border-[#e0dcd2] px-2 py-0.5 text-[11px] font-medium text-[#7d786d]">
+      <span className="inline-flex items-center gap-1 rounded-full border border-white/12 px-2 py-0.5 text-[11px] font-medium text-[#5c6579]">
         <CalendarClock size={12} aria-hidden="true" />
         已截止
       </span>
@@ -23,7 +23,7 @@ export function DeadlineBadge({ deadline }: { deadline?: string }) {
 
   if (days <= 3) {
     return (
-      <span className="inline-flex items-center gap-1 rounded-full border border-[#f2d9b6] bg-[#fdf6ec] px-2 py-0.5 text-[11px] font-semibold tabular-nums text-[#b45309]">
+      <span className="inline-flex items-center gap-1 rounded-full border border-[#f5b04d]/40 bg-[#f5b04d]/10 px-2 py-0.5 text-[11px] font-semibold tabular-nums text-[#f5b04d]">
         <CalendarClock size={12} aria-hidden="true" />
         {days === 0 ? '今天截止' : `D-${days}`}
       </span>
@@ -31,7 +31,7 @@ export function DeadlineBadge({ deadline }: { deadline?: string }) {
   }
 
   return (
-    <span className="inline-flex items-center gap-1 rounded-full border border-[#ece8de] px-2 py-0.5 text-[11px] font-medium tabular-nums text-[#7d786d]">
+    <span className="inline-flex items-center gap-1 rounded-full border border-white/12 px-2 py-0.5 text-[11px] font-medium tabular-nums text-[#8a93a8]">
       <CalendarClock size={12} aria-hidden="true" />
       D-{days}
     </span>

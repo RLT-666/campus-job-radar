@@ -1,24 +1,18 @@
 // ============================================================
-// 看板页：投递漏斗 6 列视图（阶段一闭环）
+// 看板页：投递漏斗 6 列视图 ——「深空雷达 · Mission Control」暗色版
 // ============================================================
-// 数据流：适配层 board-api → 纯 reducer board-reducer → 列/卡片组件。
-// 当前由 mock 数据驱动（按《分工执行计划》表 5，看板可用 mock 并行开发）；
-// A 的契约对齐后仅替换 board-api 内部实现，本页与组件零改动。
+// 数据流：适配层 board-api → 纯 reducer board-reducer → 列/卡片组件
+// （与旧版完全一致：乐观更新/回滚/状态机校验/埋点全部保留，仅重写视觉层）。
 //
-// 埋点：创建卡片成功上报 create_application（props: channel/status，
-// 口径见 docx/analytics-events.md，事件表由 C 维护）。
-//
-// 详情抽屉：点击卡片右侧滑出，含完整字段、笔记乐观保存（失败回滚）、
-// 环节时间线（mock events，契约对齐后换 events 接口）与删除二次确认。
-//
-// 设计语言：产品页统一走「截止时刻表 · Editorial」
-// （纸面 #faf9f6 / 墨色 #1a1a17 / 克莱因蓝 #002fa7 / 琥珀仅作截止警示）。
-// 主色通过作用域内覆盖 --color-primary 实现，暂不动全局 shadcn 令牌，
-// 全站令牌统一在 W5「视觉统一」任务中一次性收敛。
+// 视觉：three.js 深空雷达背景（RadarScene，dynamic ssr:false 按需加载）
+//   + CSS 氛围光晕层 + 玻璃拟态列与卡片。
+//   配色：深空底 #05070e / 电光克莱因蓝 #3d6bff / 品牌青 #75e6ed /
+//         琥珀 #f5b04d 仅作截止警示 / 翡翠 #34d399 表 Offer / 珊瑚红 #ff6b6b 表未通过。
 // ============================================================
 'use client'
 
 import { useEffect, useReducer, useRef, useState } from 'react'
+import dynamic from 'next/dynamic'
 import {
   DndContext,
   KeyboardSensor,
@@ -29,9 +23,12 @@ import {
   type DragOverEvent,
   type DragStartEvent,
 } from '@dnd-kit/core'
-import { Loader2, Plus } from 'lucide-react'
+import { Loader2, Plus, Radar } from 'lucide-react'
 
-import { BoardColumn, type DropHighlight } from '@/components/board/BoardColumn'
+import {
+  BoardColumn,
+  type DropHighlight,
+} from '@/components/board/BoardColumn'
 import { ApplicationDrawer } from '@/components/board/ApplicationDrawer'
 import { CreateApplicationModal } from '@/components/board/CreateApplicationModal'
 import {
@@ -46,15 +43,21 @@ import { boardReducer } from '@/components/board/board-reducer'
 import {
   BOARD_COLUMNS,
   canTransition,
+  daysUntilDeadline,
   resolveTargetStatus,
 } from '@/components/board/status'
+import { COLUMN_ACCENTS } from '@/components/board/status-visual'
 import type { TimelineEvent } from '@/components/board/mock-events'
-import { Button } from '@/components/ui/Button'
 import { track } from '@/lib/analytics'
 import type { Application } from '@/mocks/applications'
 import type { ApplicationFormValues } from './application-form.schema'
 
-/** 轻提示语气：成功用墨色描边，失败用警示红 */
+// 3D 背景：纯客户端渲染，服务端跳过（WebGL 依赖浏览器上下文）
+const RadarScene = dynamic(() => import('@/components/board/RadarScene'), {
+  ssr: false,
+})
+
+/** 轻提示语气：成功用电光蓝描边，失败用警示红 */
 type ToastTone = 'success' | 'error'
 
 export default function BoardPage() {
@@ -72,7 +75,7 @@ export default function BoardPage() {
   // 删除进行中：防止确认框重复提交
   const [deleting, setDeleting] = useState(false)
   // 拖拽过程状态：activeId 为拖动中卡片 id；overColumnKey + overValid
-  // 决定列高亮（合法=蓝、非法=红、无=不变）
+  // 决定列高亮（合法=电光蓝、非法=警示红、无=不变）
   const [activeId, setActiveId] = useState<string | null>(null)
   const [overColumnKey, setOverColumnKey] = useState<string | null>(null)
   const [overValid, setOverValid] = useState(false)
@@ -167,7 +170,6 @@ export default function BoardPage() {
 
   // 保存笔记（乐观更新）：
   // 先派发 UPDATE_NOTES 立即改本地列表 → 再调适配层 → 失败回滚旧值并提示。
-  // 这是《落地方案》难点一「乐观更新 + 失败回滚」在笔记场景的同一套编排。
   function handleSaveNotes(id: string, notes: string) {
     const previous = applications.find((app) => app.id === id)?.notes ?? ''
     dispatch({ type: 'UPDATE_NOTES', id, notes })
@@ -192,13 +194,13 @@ export default function BoardPage() {
       .finally(() => setDeleting(false))
   }
 
-  // ---------- 拖拽编排（对应《落地方案》难点一：看板数据一致性） ----------
+  // ---------- 拖拽编排（看板数据一致性，逻辑与旧版一致） ----------
 
   function handleDragStart(event: DragStartEvent) {
     setActiveId(String(event.active.id))
   }
 
-  // 悬停过程实时校验落点合法性：决定列高亮（蓝=可放、红=不可放）
+  // 悬停过程实时校验落点合法性：决定列高亮（电光蓝=可放、警示红=不可放）
   function handleDragOver(event: DragOverEvent) {
     if (!event.over || !activeId) {
       setOverColumnKey(null)
@@ -242,7 +244,7 @@ export default function BoardPage() {
     }
 
     const from = app.status
-    // 乐观更新：先改本地 UI，再调适配层（W2 验收：拖动后服务端状态一致）
+    // 乐观更新：先改本地 UI，再调适配层（拖动后服务端状态一致）
     dispatch({ type: 'MOVE', id: app.id, from, to })
     moveApplicationStatus(app.id, from, to)
       .then(() => {
@@ -250,7 +252,7 @@ export default function BoardPage() {
         void track('move_status', { from, to })
       })
       .catch(() => {
-        // 失败回滚本地状态并提示（W2 验收：断网拖动可回滚）
+        // 失败回滚本地状态并提示（断网拖动可回滚）
         dispatch({ type: 'ROLLBACK', id: app.id, previousStatus: from })
         showToast('状态流转失败，已回滚', 'error')
       })
@@ -270,35 +272,74 @@ export default function BoardPage() {
 
   const totalCount = applications.length
 
+  // 页头统计：面试中（4 个面试态归并）/ Offer / 今日截止
+  const interviewCount = applications.filter((app) =>
+    ['interview_1', 'interview_2', 'interview_3', 'hr'].includes(app.status),
+  ).length
+  const offerCount = applications.filter(
+    (app) => app.status === 'offer',
+  ).length
+  const dueTodayCount = applications.filter(
+    (app) => daysUntilDeadline(app.deadline) === 0,
+  ).length
+
   return (
-    <main className="min-h-svh bg-[#faf9f6] text-[#1a1a17] [--color-primary:#002fa7]">
-      <div className="mx-auto w-full max-w-7xl px-4 py-8 sm:px-6">
-        {/* 页头：衬线大标题 + 统计 + 主操作 */}
-        <header className="mb-8 flex flex-wrap items-end justify-between gap-4">
+    <main className="relative min-h-svh overflow-x-hidden bg-[#05070e] text-[#e8ecf6] [--color-primary:#3d6bff]">
+      {/* 氛围光晕层（CSS）：深空底色 + 双侧辐射光，DOM 序在 3D 画布之前 */}
+      <div
+        aria-hidden="true"
+        className="pointer-events-none fixed inset-0 bg-[radial-gradient(60%_80%_at_15%_25%,rgba(61,107,255,0.16),transparent_60%),radial-gradient(50%_70%_at_88%_12%,rgba(117,230,237,0.09),transparent_60%),radial-gradient(70%_60%_at_50%_115%,rgba(61,107,255,0.12),transparent_65%)]"
+      />
+      {/* three.js 深空雷达背景（星域粒子 + 扫描盘 + 线框穹顶，鼠标视差） */}
+      <RadarScene />
+
+      <div className="relative z-10 mx-auto w-full max-w-7xl px-4 py-10 sm:px-6">
+        {/* 页头：衬线大标题 + 活动统计 + 主操作 */}
+        <header className="mb-10 flex flex-wrap items-end justify-between gap-4">
           <div>
+            <div className="mb-3 inline-flex items-center gap-2 text-[11.5px] font-medium tracking-[0.18em] text-[#75e6ed]">
+              <Radar size={14} aria-hidden="true" />
+              CAMPUS JOB RADAR
+            </div>
             <h1
-              className="text-[28px] font-bold leading-tight tracking-[-0.01em]"
+              className="text-[32px] font-bold leading-tight tracking-[-0.01em] text-[#e8ecf6]"
               style={{ fontFamily: 'var(--font-serif-sc), serif' }}
             >
               投递看板
+              <span className="ml-3 bg-gradient-to-r from-[#3d6bff] to-[#75e6ed] bg-clip-text text-transparent">
+                · 深空雷达
+              </span>
             </h1>
-            <p className="mt-1.5 text-[13.5px] text-[#7d786d]">
-              共 {totalCount} 条投递 · 按进度跟踪校招机会
-            </p>
+            <div className="mt-3 flex flex-wrap items-center gap-2">
+              <span className="rounded-full border border-white/10 bg-white/5 px-3 py-1 text-[12px] tabular-nums text-[#8a93a8]">
+                共 <b className="font-semibold text-[#e8ecf6]">{totalCount}</b> 条投递
+              </span>
+              <span className="rounded-full border border-[#3d6bff]/30 bg-[#3d6bff]/10 px-3 py-1 text-[12px] tabular-nums text-[#9db9ff]">
+                面试中 {interviewCount}
+              </span>
+              <span className="rounded-full border border-[#34d399]/30 bg-[#34d399]/10 px-3 py-1 text-[12px] tabular-nums text-[#7ee2b8]">
+                Offer {offerCount}
+              </span>
+              {dueTodayCount > 0 && (
+                <span className="rounded-full border border-[#f5b04d]/40 bg-[#f5b04d]/10 px-3 py-1 text-[12px] tabular-nums text-[#f5b04d]">
+                  今日截止 {dueTodayCount}
+                </span>
+              )}
+            </div>
           </div>
-          <Button
+          <button
             type="button"
             onClick={() => setModalOpen(true)}
-            className="h-9 cursor-pointer gap-1.5 px-4 text-[13.5px] font-medium text-white transition-colors duration-200 hover:bg-[#00267f]"
+            className="inline-flex h-10 cursor-pointer items-center gap-1.5 rounded-xl bg-gradient-to-br from-[#2b5cff] via-[#3d6bff] to-[#6f96ff] px-5 text-[13.5px] font-semibold text-white shadow-[0_6px_24px_-6px_rgba(61,107,255,0.55)] transition-all duration-200 hover:shadow-[0_8px_32px_-6px_rgba(61,107,255,0.7)] hover:brightness-110 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#3d6bff]/50 active:scale-[0.98]"
           >
             <Plus size={15} aria-hidden="true" />
             新建投递
-          </Button>
+          </button>
         </header>
 
         {/* 加载态：骨架占位，避免内容闪跳 */}
         {loading ? (
-          <div className="flex min-h-48 items-center justify-center text-[#7d786d]">
+          <div className="flex min-h-48 items-center justify-center text-[#8a93a8]">
             <Loader2 size={18} className="animate-spin" aria-hidden="true" />
             <span className="ml-2 text-sm">正在加载投递数据…</span>
           </div>
@@ -328,6 +369,7 @@ export default function BoardPage() {
                   <BoardColumn
                     key={col.key}
                     column={col}
+                    accent={COLUMN_ACCENTS[col.key]}
                     applications={col.items}
                     onCardOpen={handleOpenCard}
                     dropHighlight={dropHighlight}
@@ -359,16 +401,16 @@ export default function BoardPage() {
         deleting={deleting}
       />
 
-      {/* 轻提示：底部居中，读屏可感知 */}
+      {/* 轻提示：底部居中深色玻璃胶囊，读屏可感知 */}
       {toast && (
         <div
           role="status"
           aria-live="polite"
-          className="fixed bottom-6 left-1/2 z-[60] -translate-x-1/2 rounded-full border bg-white px-4 py-2 text-[13px] shadow-[0_8px_24px_-8px_rgba(26,26,23,0.24)]"
+          className="fixed bottom-6 left-1/2 z-[60] -translate-x-1/2 rounded-full border border-white/12 bg-[#0b0f1a]/90 px-4 py-2 text-[13px] shadow-[0_8px_32px_-8px_rgba(0,0,0,0.6)] backdrop-blur-md"
         >
           <span
             className={
-              toast.tone === 'error' ? 'text-[#b42318]' : 'text-[#1a1a17]'
+              toast.tone === 'error' ? 'text-[#ff6b6b]' : 'text-[#e8ecf6]'
             }
           >
             {toast.message}
