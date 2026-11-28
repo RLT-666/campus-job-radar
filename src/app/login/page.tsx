@@ -1,259 +1,317 @@
 'use client'
 
-import { Suspense, useEffect, useMemo, useState, type FormEvent } from 'react'
-import { useRouter, useSearchParams } from 'next/navigation'
+import { Suspense, useEffect, useMemo, useRef, useState, type FormEvent } from 'react'
+import dynamic from 'next/dynamic'
+import { useSearchParams } from 'next/navigation'
 import {
   AlertCircle,
   ArrowRight,
+  Bell,
+  CalendarCheck2,
   CheckCircle2,
-  Clock3,
+  Database,
   Loader2,
-  Lock,
-  Mail,
-  Radar,
-  ShieldCheck,
 } from 'lucide-react'
 
-import { Button } from '@/components/ui/Button'
-import { Input } from '@/components/ui/Input'
-import {
-  sendEmailCode,
-  signInWithPassword,
-  signUpWithPassword,
-  verifyEmailCode,
-} from '@/lib/auth/client'
+import { sendEmailCode } from '@/lib/auth/client'
 import { cn } from '@/lib/utils'
 
+// 动效仅客户端加载：three 不进入首屏关键路径，静态 CSS/SVG 始终保留作回退
+const AnimatedBackdrop = dynamic(() => import('@/components/login/AnimatedBackdrop'), { ssr: false })
+const Radar3D = dynamic(() => import('@/components/login/Radar3D'), { ssr: false })
+
 /* ============================================================
-   设计系统「截止时刻表 · Editorial」
-   纸面 #faf9f6 / 墨色 #1a1a17 / 克莱因蓝 #002fa7 / 琥珀（仅临近截止）
-   字体：Noto Serif SC（标题，--font-serif-sc）+ Geist（UI）
-   规则：单一强调色、细分隔线、动效仅一次入场 + 倒计时跳动
+   设计稿还原：浅蓝渐变 + 玻璃卡片
+   底色 #f2f7ff / 主蓝 #3b6cf5 / 正文 #22314a / 辅助 #8b99ae
+   构图：左侧品牌叙事（雷达插图 + 渐变标题 + 三项能力）
+        右侧登录卡片（邮箱登录链接 + 三种登录方式）
    ============================================================ */
 
 const pageCss = `
-/* 浏览器原生面跟随纸面世界 */
-.lp-page { color-scheme: light; }
-.lp-page ::selection { background: rgba(0, 47, 167, 0.14); }
-
-/* 入场：整页唯一的一组 reveal，指数缓出 */
-@keyframes lp-reveal {
-  from { opacity: 0; transform: translateY(22px); }
-  to   { opacity: 1; transform: none; }
+.lgc-page {
+  color-scheme: light;
+  font-family: "HarmonyOS Sans SC", "PingFang SC", "Microsoft YaHei", var(--font-geist-sans), ui-sans-serif, system-ui, sans-serif;
 }
-.lp-reveal  { animation: lp-reveal 0.8s cubic-bezier(0.16, 1, 0.3, 1) both; }
-.lp-reveal-2 { animation-delay: 0.08s; }
-.lp-reveal-3 { animation-delay: 0.18s; }
-.lp-reveal-4 { animation-delay: 0.28s; }
+.lgc-page ::selection { background: rgba(59, 108, 245, 0.16); }
 
-/* 时刻表行：错峰浮现 */
-@keyframes lp-row {
-  from { opacity: 0; transform: translateY(10px); }
-  to   { opacity: 1; transform: none; }
+.lgc-dots {
+  background-image: radial-gradient(circle, rgba(136, 163, 205, 0.55) 1px, transparent 1.1px);
+  background-size: 11px 11px;
+  -webkit-mask-image: radial-gradient(ellipse at center, #000 26%, transparent 74%);
+  mask-image: radial-gradient(ellipse at center, #000 26%, transparent 74%);
 }
-.lp-row { animation: lp-row 0.6s cubic-bezier(0.16, 1, 0.3, 1) both; }
-
-/* 表单面板切换 */
-@keyframes lp-panel {
-  from { opacity: 0; transform: translateX(10px); }
-  to   { opacity: 1; transform: none; }
+.lgc-dots-light {
+  background-image: radial-gradient(circle, rgba(255, 255, 255, 0.9) 1px, transparent 1.1px);
+  background-size: 10px 10px;
+  -webkit-mask-image: radial-gradient(ellipse at center, #000 30%, transparent 72%);
+  mask-image: radial-gradient(ellipse at center, #000 30%, transparent 72%);
 }
-.lp-panel { animation: lp-panel 0.32s cubic-bezier(0.16, 1, 0.3, 1) both; }
 
-/* 图标加载指示 */
-@keyframes lp-spin { to { transform: rotate(360deg); } }
-.lp-spin { animation: lp-spin 0.9s linear infinite; }
+@keyframes lgc-rise {
+  from { opacity: 0; transform: translateY(18px); }
+  to { opacity: 1; transform: none; }
+}
+.lgc-rise { animation: lgc-rise 0.8s cubic-bezier(0.16, 1, 0.3, 1) both; }
+.lgc-rise-2 { animation-delay: 0.12s; }
+.lgc-rise-3 { animation-delay: 0.2s; }
 
-/* 动效敏感用户：全部静止 */
+@keyframes lgc-float {
+  0%, 100% { transform: translateY(0); }
+  50% { transform: translateY(-6px); }
+}
+.lgc-float { animation: lgc-float 6s ease-in-out infinite; }
+
+@keyframes lgc-spin { to { transform: rotate(360deg); } }
+.lgc-spin { animation: lgc-spin 0.9s linear infinite; }
+
+.lgc-script {
+  font-family: "Segoe Script", "Bradley Hand", "Brush Script MT", "Snell Roundhand", cursive;
+}
+
 @media (prefers-reduced-motion: reduce) {
-  .lp-reveal, .lp-reveal-2, .lp-reveal-3, .lp-reveal-4, .lp-row, .lp-panel, .lp-spin {
+  .lgc-rise, .lgc-rise-2, .lgc-rise-3, .lgc-float, .lgc-spin {
     animation: none !important;
   }
 }
 `
 
-/* 示意时刻表数据：琥珀色行 = 临近截止（唯一暖色信号） */
-const timetable = [
-  { company: '腾讯 · 前端实习', batch: '2027 届暑期', days: 12 },
-  { company: '美团 · 后端开发工程师', batch: '2027 届秋招', days: 21 },
-  { company: '字节跳动 · 产品培训生', batch: '2026 届补录', days: 34 },
-  { company: '网易 · 游戏策划', batch: '2027 届校招正式批', days: 46 },
-]
-
-/* 临近截止行：登录页唯一“活着”的细节 */
-const lateInitialSeconds = 3 * 86400 + 2 * 3600 + 41 * 60 + 9
-
-type Status = 'idle' | 'sending' | 'sent' | 'error'
-type AuthMode = 'login' | 'register'
-type LoginMethod = 'password' | 'code'
+const FEATURES = [
+  { icon: Database, title: '信息聚合', hint: '不再翻多个群' },
+  { icon: Bell, title: '截止提醒', hint: '不漏不忘' },
+  { icon: CalendarCheck2, title: '进度看板', hint: '一眼看清' },
+] as const
 
 export default function LoginPage() {
   return (
-    <main
-      className={cn(
-        'lp-page relative min-h-dvh bg-[#faf9f6] px-5 py-8 text-[#1a1a17] sm:px-10 lg:py-0',
-      )}
-    >
+    <main className="lgc-page relative isolate min-h-dvh overflow-hidden bg-[#f3f7ff] text-[#22314a]">
       <style>{pageCss}</style>
+      <Backdrop />
 
-      {/* 背景层：编辑排版的竖向栏线，纯环境层 */}
-      <div aria-hidden="true" className="pointer-events-none absolute inset-0 hidden lg:block">
-        <div className="mx-auto grid h-full max-w-6xl grid-cols-4 px-4">
-          {[0, 1, 2, 3].map((i) => (
-            <div key={i} className="border-l border-[#ece8de] first:border-l-0" />
-          ))}
-        </div>
-      </div>
+      <div className="relative z-10 mx-auto flex min-h-dvh w-full max-w-[1400px] flex-col px-6 py-7 sm:px-9 lg:px-10 lg:py-9">
+        <p className="flex items-center gap-3 text-[11.5px] tracking-[0.18em] text-[#7d8ba0] sm:text-[12px] xl:text-[13px]">
+          让求职更有方向
+          <span aria-hidden="true" className="h-px w-12 bg-[#c3d1e6]" />
+        </p>
 
-      <div className="relative mx-auto grid min-h-dvh w-full max-w-6xl items-center gap-10 px-2 py-6 lg:grid-cols-[1.15fr_1fr] lg:gap-16 lg:py-10">
-        {/* 左列：品牌叙事 + 截止时刻表 */}
-        <section>
-          <div className="lp-reveal flex items-center gap-3">
-            <span className="flex h-10 w-10 items-center justify-center rounded-xl bg-[#002fa7] text-white">
-              <Radar size={20} strokeWidth={2} aria-hidden="true" />
-            </span>
-            <span className="text-[16px] font-semibold tracking-[0.02em]">校招雷达</span>
-            <span className="ml-auto hidden text-[11px] font-medium tracking-[0.22em] text-[#7d786d] sm:block">
-              CAMPUS JOB RADAR
-            </span>
-          </div>
+        <div className="grid flex-1 items-center gap-10 pb-4 pt-6 md:grid-cols-[1fr_1fr] md:gap-6 md:py-0">
+          {/* 左：品牌叙事 */}
+          <section className="lgc-rise relative flex flex-col items-center text-center md:h-full md:justify-center">
+            <Radar3D />
 
-          <h1
-            className="lp-reveal lp-reveal-2 mt-14 text-[clamp(38px,4.6vw,60px)] font-black leading-[1.18] tracking-[-0.01em]"
-            style={{ fontFamily: 'var(--font-serif-sc), serif' }}
-          >
-            别再错过
-            <br />
-            任何一个<span className="text-[#002fa7]">截止日期</span>。
-          </h1>
-          <p className="lp-reveal lp-reveal-3 mt-5 max-w-[32em] text-[15px] leading-[1.85] text-[#5f5b52]">
-            把分散在各校就业网、公众号与企业官网的校招信息收进一张时间线；截止前 3 天，准时提醒你。
-          </p>
-
-          {/* 截止时刻表：产品事实即艺术 */}
-          <div className="mt-12 hidden max-w-[560px] md:block">
-            <div className="flex items-baseline justify-between border-b border-[#1a1a17] pb-2.5">
-              <span className="text-[12.5px] font-semibold tracking-[0.08em]">近期截止</span>
-              <span className="text-[11.5px] text-[#7d786d]">登录后同步你的收藏</span>
+            <h1 className="sr-only">校招雷达</h1>
+            <div aria-hidden="true" className="-mt-1 w-full max-w-[360px] sm:max-w-[380px] xl:max-w-[560px]">
+              <TitleArt />
             </div>
-            <Timetable />
-          </div>
-        </section>
 
-        {/* 右列：登录任务面板 */}
-        <section className="lp-reveal lp-reveal-4 w-full">
-          <div className="rounded-2xl border border-[#e7e3d9] bg-white p-7 shadow-[0_1px_2px_rgba(26,26,23,0.04),0_20px_48px_-28px_rgba(26,26,23,0.18)] sm:p-9">
-            <Suspense
-              fallback={
-                <div className="flex h-80 items-center justify-center">
-                  <Loader2 size={20} className={cn('lp-spin text-[#7d786d]')} aria-hidden="true" />
-                </div>
-              }
+            <p className="mt-3 flex items-center justify-center gap-3 text-[12px] text-[#7d8ba0] sm:text-[13px] xl:mt-6 xl:text-[14px]">
+              <span aria-hidden="true" className="h-px w-6 bg-[#c6d4e9] sm:w-8" />
+              盯紧每一个截止时间，管好每一次投递
+              <span aria-hidden="true" className="h-px w-6 bg-[#c6d4e9] sm:w-8" />
+            </p>
+
+            <ul className="mt-5 grid w-full max-w-[430px] grid-cols-3 gap-2 sm:mt-7 sm:gap-4 xl:mt-12 xl:max-w-[560px] xl:gap-6">
+              {FEATURES.map(({ icon: Icon, title, hint }) => (
+                <li key={title} className="flex flex-col items-center">
+                  <span className="flex size-11 items-center justify-center rounded-full border border-[#e2ebf8] bg-white/75 text-[#6c8cbe] shadow-[0_8px_20px_-14px_rgba(80,115,185,0.55)] backdrop-blur-sm xl:size-16">
+                    <Icon size={18} strokeWidth={1.6} aria-hidden="true" className="xl:size-6" />
+                  </span>
+                  <span className="mt-2.5 text-[12px] font-semibold text-[#56677f] xl:mt-3 xl:text-[14px]">{title}</span>
+                  <span className="mt-1 text-[10.5px] text-[#9aa8ba] xl:mt-1.5 xl:text-[12px]">{hint}</span>
+                </li>
+              ))}
+            </ul>
+
+            <p
+              aria-hidden="true"
+              className="lgc-script mt-10 -rotate-6 self-start pl-2 text-[19px] leading-[1.35] text-[#7f92af] sm:mt-12 sm:text-[20px] md:mt-8 xl:mt-16 xl:pl-4 xl:text-[27px]"
             >
-              <LoginForm />
-            </Suspense>
-          </div>
+              Good Opportunities
+              <br />
+              <span className="pl-10">Ahead</span>
+            </p>
+          </section>
 
-          <p className="mt-4 flex items-center gap-1.5 pl-1 text-xs text-[#7d786d]">
-            <ShieldCheck size={14} className="shrink-0 text-[#002fa7]" aria-hidden="true" />
-            仅用于登录与截止提醒，不向第三方共享信息
-          </p>
-        </section>
+          {/* 右：登录卡片 */}
+          <section className="lgc-rise lgc-rise-2 relative w-full max-w-[440px] justify-self-center md:justify-self-end xl:max-w-[560px]">
+            <div
+              aria-hidden="true"
+              className="absolute inset-x-[-11px] bottom-0 top-[52%] rounded-[26px] border border-white/70 bg-white/70 shadow-[0_26px_60px_-34px_rgba(55,92,170,0.5)] backdrop-blur-sm"
+            />
+            <div className="relative overflow-hidden rounded-[22px] border border-white/90 bg-[#fdfeff] shadow-[0_34px_80px_-40px_rgba(46,84,168,0.55),0_2px_10px_rgba(70,110,190,0.06)] transition-[transform,box-shadow] duration-300 hover:-translate-y-0.5 hover:shadow-[0_42px_90px_-38px_rgba(46,84,168,0.62),0_2px_10px_rgba(70,110,190,0.08)] xl:rounded-[26px]">
+              <div className="px-6 pb-6 pt-8 sm:px-9 sm:pb-7 sm:pt-10 xl:px-12 xl:pb-10 xl:pt-14">
+                <Suspense
+                  fallback={
+                    <div className="flex h-[268px] items-center justify-center">
+                      <Loader2 size={20} className="lgc-spin text-[#9aa8ba]" aria-hidden="true" />
+                    </div>
+                  }
+                >
+                  <LoginPanel />
+                </Suspense>
+              </div>
+
+              <div className="px-6 pb-6 sm:px-9 xl:px-12 xl:pb-10">
+                <div className="flex items-center gap-3 text-[10.5px] tracking-[0.04em] text-[#9ca9ba] xl:text-[12px]">
+                  <span aria-hidden="true" className="h-px flex-1 bg-[#e9eff9]" />
+                  或使用以下方式
+                  <span aria-hidden="true" className="h-px flex-1 bg-[#e9eff9]" />
+                </div>
+                <SocialLogin />
+
+                <p className="mt-5 text-center text-[10.5px] leading-relaxed text-[#a9b4c3] xl:mt-7 xl:text-[12px]">
+                  登录即代表同意
+                  <span className="cursor-default text-[#7088b2]">使用条款</span>与
+                  <span className="cursor-default text-[#7088b2]">隐私政策</span>
+                </p>
+              </div>
+            </div>
+          </section>
+        </div>
       </div>
     </main>
   )
 }
 
-/* 时刻表：引导点线 + 倒计时，行悬浮回应指针 */
-function Timetable() {
-  const [lateSeconds, setLateSeconds] = useState(lateInitialSeconds)
-
-  useEffect(() => {
-    const timer = setInterval(() => setLateSeconds((s) => Math.max(0, s - 1)), 1000)
-    return () => clearInterval(timer)
-  }, [])
-
-  const clock = useMemo(() => {
-    const h = Math.floor(lateSeconds / 3600)
-    const m = Math.floor((lateSeconds % 3600) / 60)
-    const s = lateSeconds % 60
-    return [h, m, s].map((n) => String(n).padStart(2, '0')).join(':')
-  }, [lateSeconds])
-
+/* 背景：按原稿还原 —— 左下紫/青绿、右下蓝、边缘浓中间淡，叠白色丝带与点阵 */
+function Backdrop() {
   return (
-    <ul role="table" aria-label="近期校招截止倒计时（示意数据）">
-      <li
-        className="lp-row flex items-center gap-3 border-b border-[#ece8de] py-3.5 transition-colors duration-200 hover:bg-[#f3f1ea]"
-        style={{ animationDelay: '0.36s' }}
-      >
-        <span aria-hidden="true" className="h-2 w-2 shrink-0 rounded-full bg-[#b45309]" />
-        <div className="min-w-0">
-          <p className="truncate text-[14.5px] font-semibold leading-tight">腾讯 · 前端实习</p>
-          <p className="mt-0.5 text-[11.5px] text-[#7d786d]">2027 届暑期</p>
-        </div>
-        <span aria-hidden="true" className="mx-1 flex-1 -translate-y-1 border-b border-dotted border-[#d8d3c6]" />
-        <span className="flex shrink-0 items-center gap-1.5 rounded-full border border-[#f2d9b6] bg-[#fdf6ec] px-2.5 py-1 text-[12.5px] font-semibold tabular-nums text-[#b45309]">
-          <Clock3 size={13} aria-hidden="true" />
-          还剩 {clock}
-        </span>
-      </li>
+    <div aria-hidden="true" className="pointer-events-none absolute inset-0 overflow-hidden">
+      <div className="absolute inset-0 bg-[#eef4fd]" />
+      <div
+        className="absolute inset-0"
+        style={{
+          backgroundImage: [
+            // 左下青绿（最贴左下角、最亮）
+            'radial-gradient(46% 56% at 0% 100%, rgba(110,232,200,0.95), rgba(110,232,200,0) 65%)',
+            // 左下紫色团（青绿之上、略偏右上，让底部露出青绿）
+            'radial-gradient(52% 62% at 10% 86%, rgba(170,125,245,0.9), rgba(170,125,245,0) 66%)',
+            // 右下蓝色团（向上延伸，覆盖卡片右下）
+            'radial-gradient(60% 92% at 100% 92%, rgba(100,140,245,0.95), rgba(100,140,245,0) 68%)',
+            // 底部中央淡青
+            'radial-gradient(42% 46% at 45% 100%, rgba(150,225,235,0.5), rgba(150,225,235,0) 70%)',
+            // 右上淡蓝
+            'radial-gradient(44% 54% at 100% 0%, rgba(168,203,252,0.65), rgba(168,203,252,0) 70%)',
+            // 左上淡蓝
+            'radial-gradient(46% 56% at 0% 0%, rgba(158,194,250,0.6), rgba(158,194,250,0) 70%)',
+            // 中部淡紫
+            'radial-gradient(40% 50% at 38% 45%, rgba(205,195,250,0.28), rgba(205,195,250,0) 70%)',
+            // 中央留白，突出标题与卡片
+            'radial-gradient(55% 65% at 45% 38%, rgba(255,255,255,0.6), rgba(255,255,255,0) 72%)',
+          ].join(','),
+        }}
+      />
 
-      {timetable.map((row, i) => (
-        <li
-          key={row.company}
-          className="lp-row flex items-center gap-3 border-b border-[#ece8de] py-3.5 transition-colors duration-200 last:border-b-0 hover:bg-[#f3f1ea]"
-          style={{ animationDelay: `${0.44 + i * 0.06}s` }}
-        >
-          <span aria-hidden="true" className="h-2 w-2 shrink-0 rounded-full bg-[#002fa7]/70" />
-          <div className="min-w-0">
-            <p className="truncate text-[14.5px] font-semibold leading-tight">{row.company}</p>
-            <p className="mt-0.5 text-[11.5px] text-[#7d786d]">{row.batch}</p>
-          </div>
-          <span aria-hidden="true" className="mx-1 flex-1 -translate-y-1 border-b border-dotted border-[#d8d3c6]" />
-          <span className="shrink-0 text-[12.5px] font-medium tabular-nums text-[#7d786d]">
-            D-{row.days}
-          </span>
-        </li>
-      ))}
-    </ul>
+      {/* 白色丝带 */}
+      <svg
+        className="absolute inset-0 h-full w-full opacity-90"
+        viewBox="0 0 1440 900"
+        preserveAspectRatio="none"
+      >
+        <path
+          d="M-80 730C260 640 470 830 830 740c330-82 520 10 720-40"
+          fill="none"
+          stroke="rgba(255,255,255,0.85)"
+          strokeWidth="2.5"
+        />
+        <path
+          d="M-60 790C280 700 500 890 860 800c320-80 500 0 700-46"
+          fill="none"
+          stroke="rgba(255,255,255,0.6)"
+          strokeWidth="1.6"
+        />
+        <path
+          d="M-100 400C240 330 420 500 760 420c300-70 500 30 780-30"
+          fill="none"
+          stroke="rgba(255,255,255,0.45)"
+          strokeWidth="1.4"
+        />
+        <circle cx="1180" cy="170" r="230" fill="rgba(255,255,255,0.18)" />
+      </svg>
+
+      {/* 点阵 */}
+      <div className="lgc-dots absolute right-6 top-14 size-20 opacity-70 sm:right-10" />
+      <div className="lgc-dots absolute right-4 top-[62%] size-16 opacity-60" />
+      <div className="lgc-dots absolute bottom-16 left-[16%] size-20 opacity-45" />
+      <div className="lgc-dots absolute left-6 top-16 size-14 opacity-35" />
+      {/* 左下白色点阵（压在紫色团上） */}
+      <div className="lgc-dots-light absolute bottom-8 left-[10%] size-24 opacity-80" />
+
+      <AnimatedBackdrop />
+    </div>
   )
 }
 
-/* 两种登录方式：邮箱密码、邮箱验证码（均为 Supabase Auth 原生能力） */
-const loginMethods: {
-  id: LoginMethod
-  label: string
-  accountLabel: string
-  accountIcon: typeof Mail
-  accountPlaceholder: string
-}[] = [
-  {
-    id: 'password',
-    label: '密码登录',
-    accountLabel: '邮箱',
-    accountIcon: Mail,
-    accountPlaceholder: 'you@example.com',
-  },
-  {
-    id: 'code',
-    label: '邮箱验证码',
-    accountLabel: '邮箱',
-    accountIcon: Mail,
-    accountPlaceholder: 'you@example.com',
-  },
-]
+/* 邮箱图标：按提供的图标绘制（方形信封 + 翻盖交叉线） */
+function EnvelopeIcon({ className }: { className?: string }) {
+  return (
+    <svg
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth={1.5}
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      className={className}
+      aria-hidden="true"
+    >
+      <rect x="3" y="5" width="18" height="14" rx="1.5" />
+      <path d="M3.5 5.5 20.5 18.5M20.5 5.5 3.5 18.5" />
+    </svg>
+  )
+}
 
-function LoginForm() {
-  const router = useRouter()
+/* 渐变标题：白描边 + 淡蓝投影，贴近设计稿的立体字 */
+function TitleArt() {
+  return (
+    <svg viewBox="0 0 420 118" className="w-full">
+      <defs>
+        <linearGradient id="title-grad" x1="0" y1="0" x2="0" y2="1">
+          <stop offset="0%" stopColor="#5d8bff" />
+          <stop offset="52%" stopColor="#3462f0" />
+          <stop offset="100%" stopColor="#2b4fd4" />
+        </linearGradient>
+        <filter id="title-shadow" x="-25%" y="-30%" width="150%" height="190%">
+          <feDropShadow dx="0" dy="12" stdDeviation="9" floodColor="#5b86f0" floodOpacity="0.3" />
+        </filter>
+      </defs>
+      <g
+        textAnchor="middle"
+        fontFamily='"HarmonyOS Sans SC","PingFang SC","Microsoft YaHei",sans-serif'
+        fontWeight="800"
+        fontSize="76"
+        letterSpacing="4"
+        transform="skewX(-7)"
+      >
+        <text x="216" y="88" fill="#d3e2fb">
+          校招雷达
+        </text>
+        <text
+          x="212"
+          y="82"
+          fill="url(#title-grad)"
+          stroke="#ffffff"
+          strokeWidth="2.4"
+          paintOrder="stroke"
+          filter="url(#title-shadow)"
+        >
+          校招雷达
+        </text>
+      </g>
+    </svg>
+  )
+}
+
+type Status = 'idle' | 'sending' | 'sent' | 'error'
+
+function LoginPanel() {
   const searchParams = useSearchParams()
-  const [authMode, setAuthMode] = useState<AuthMode>('login')
-  const [loginMethod, setLoginMethod] = useState<LoginMethod>('password')
-  const [account, setAccount] = useState('')
-  const [password, setPassword] = useState('')
-  const [code, setCode] = useState('')
-  const [status, setStatus] = useState<Status>('idle')
-  const [message, setMessage] = useState('')
-  const [codeCountdown, setCodeCountdown] = useState(0)
+  const inputRef = useRef<HTMLInputElement>(null)
+  // 登录链接回调失败时，回跳到本页并直接提示重新发送
+  const linkError = searchParams.get('error') === 'link'
+  const [email, setEmail] = useState('')
+  const [status, setStatus] = useState<Status>(linkError ? 'error' : 'idle')
+  const [message, setMessage] = useState(linkError ? '登录链接已失效，请重新填写邮箱发送。' : '')
+  const [countdown, setCountdown] = useState(0)
 
   // 只允许站内绝对路径，避免 //evil.com 这类开放重定向
   const nextPath = useMemo(() => {
@@ -261,329 +319,243 @@ function LoginForm() {
     return raw.startsWith('/') && !raw.startsWith('//') ? raw : '/board'
   }, [searchParams])
 
-  const sending = status === 'sending'
-
   useEffect(() => {
-    if (codeCountdown > 0) {
-      const timer = setTimeout(() => setCodeCountdown((c) => c - 1), 1000)
+    if (countdown > 0) {
+      const timer = setTimeout(() => setCountdown((c) => c - 1), 1000)
       return () => clearTimeout(timer)
     }
-  }, [codeCountdown])
+  }, [countdown])
 
-  function clearMessage() {
-    if (status === 'error') {
-      setStatus('idle')
-      setMessage('')
-    }
-  }
+  const sending = status === 'sending'
 
-  function validate(): string | null {
-    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(account.trim())) {
-      return '邮箱格式不对：请填写完整的邮箱地址，例如 you@example.com。'
-    }
-    if (loginMethod === 'code') {
-      if (code.length !== 6) {
-        return '验证码应为 6 位数字，请核对邮件后再提交。'
-      }
-      return null
-    }
-    if (!password) {
-      return '请输入密码后再提交。'
-    }
-    if (authMode === 'register' && password.length < 6) {
-      return '密码至少需要 6 位，请调整后再提交。'
-    }
-    return null
-  }
-
-  const handleSendCode = async () => {
-    const email = account.trim()
-    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
-      setStatus('error')
-      setMessage('邮箱格式不对：请填写完整的邮箱地址后再获取验证码。')
-      return
-    }
+  async function send(emailValue: string) {
     setStatus('sending')
     setMessage('')
     try {
-      await sendEmailCode(email, authMode === 'register')
-      setCodeCountdown(60)
-      setStatus('idle')
+      const redirectTo = `${window.location.origin}/auth/callback?next=${encodeURIComponent(nextPath)}`
+      await sendEmailCode(emailValue, true, redirectTo)
+      setStatus('sent')
+      setCountdown(60)
     } catch (error) {
       setStatus('error')
-      setMessage(error instanceof Error ? error.message : '验证码发送失败，请稍后重试。')
+      setMessage(error instanceof Error ? error.message : '发送失败，请稍后重试。')
     }
   }
 
-  async function handleSubmit() {
-    const problem = validate()
-    if (problem) {
-      setStatus('error')
-      setMessage(problem)
-      return
-    }
-
-    setStatus('sending')
-    setMessage('')
-
-    try {
-      if (loginMethod === 'code') {
-        await verifyEmailCode(account.trim(), code)
-      } else if (authMode === 'register') {
-        const { needsEmailConfirm } = await signUpWithPassword(account.trim(), password)
-        if (needsEmailConfirm) {
-          setStatus('sent')
-          setMessage('注册成功：请到邮箱点击确认链接，或改用“邮箱验证码”直接登录。')
-          return
-        }
-      } else {
-        await signInWithPassword(account.trim(), password)
-      }
-
-      // 会话已写入 Cookie，回跳原目标路径；refresh 让服务端重新判定守卫
-      router.replace(nextPath)
-      router.refresh()
-    } catch (error) {
-      setStatus('error')
-      setMessage(error instanceof Error ? error.message : '提交失败：网络未连通或服务暂不可用，请稍后重试。')
-    }
-  }
-
-  function handleFormSubmit(event: FormEvent<HTMLFormElement>) {
+  function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault()
     if (sending) return
-    void handleSubmit()
+
+    const value = email.trim()
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value)) {
+      setStatus('error')
+      setMessage('邮箱格式不对：请填写完整的邮箱地址，例如 name@example.com。')
+      return
+    }
+    void send(value)
+  }
+
+  function handleResend() {
+    if (countdown > 0 || sending) return
+    const value = email.trim()
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value)) {
+      setStatus('idle')
+      return
+    }
+    void send(value)
+  }
+
+  function reset() {
+    setStatus('idle')
+    setMessage('')
+    requestAnimationFrame(() => inputRef.current?.focus())
   }
 
   if (status === 'sent') {
     return (
-      <div className="lp-panel py-2" role="status" aria-live="polite">
-        <span className="flex h-11 w-11 items-center justify-center rounded-xl bg-[#002fa7]/10 text-[#002fa7]">
-          <CheckCircle2 size={22} aria-hidden="true" />
+      <div className="flex min-h-[252px] flex-col items-center justify-center text-center" role="status" aria-live="polite">
+        <span className="flex size-14 items-center justify-center rounded-full bg-[linear-gradient(135deg,#6f9bff,#3b6cf5)] text-white shadow-[0_14px_30px_-12px_rgba(59,108,245,0.65)]">
+          <CheckCircle2 size={26} strokeWidth={2} aria-hidden="true" />
         </span>
-        <h2
-          className="mt-4 text-[22px] font-bold"
-          style={{ fontFamily: 'var(--font-serif-sc), serif' }}
-        >
-          查收邮件。
-        </h2>
-        <p className="mt-1.5 text-[13.5px] leading-relaxed text-[#5f5b52]">{message}</p>
-        <Button
+        <h2 className="mt-5 text-[22px] font-bold tracking-[0.02em] text-[#25334a]">邮件已发送</h2>
+        <p className="mt-2 max-w-[18em] text-[12.5px] leading-6 text-[#8b99ae]">
+          登录链接已发送至
+          <span className="mx-1 font-medium text-[#4a6387]">{email.trim()}</span>
+          ，请在 10 分钟内点击邮件中的链接完成登录。
+        </p>
+        <button
           type="button"
-          onClick={() => {
-            setAuthMode('login')
-            setLoginMethod('code')
-            setStatus('idle')
-            setMessage('')
-            setPassword('')
-            setCode('')
-          }}
-          className="mt-6 h-11 w-full cursor-pointer gap-2 rounded-xl bg-[#002fa7] text-[14px] font-semibold text-white transition-colors duration-200 hover:bg-[#00267f]"
+          onClick={handleResend}
+          disabled={countdown > 0 || sending}
+          className="mt-5 cursor-pointer text-[12px] font-medium text-[#3b6cf5] underline-offset-4 transition-colors hover:underline disabled:cursor-not-allowed disabled:text-[#a9b4c3] disabled:no-underline"
         >
-          用邮箱验证码登录
-          <ArrowRight size={16} aria-hidden="true" />
-        </Button>
+          {countdown > 0 ? `${countdown}s 后可重新发送` : '没收到？重新发送'}
+        </button>
+        <button
+          type="button"
+          onClick={reset}
+          className="mt-2 cursor-pointer text-[11.5px] text-[#9ca9ba] underline-offset-4 transition-colors hover:text-[#6d84a8] hover:underline"
+        >
+          更换邮箱
+        </button>
       </div>
     )
   }
 
-  const method = loginMethods.find((m) => m.id === loginMethod)!
-  const AccountIcon = method.accountIcon
-
-  const fieldClass =
-    'h-12 rounded-xl border-[#e0dcd2] bg-[#faf9f6] text-[15px] text-[#1a1a17] caret-[#002fa7] placeholder:text-[#7d786d] focus-visible:border-[#002fa7]/70 focus-visible:ring-[#002fa7]/15'
-
   return (
-    <div className="lp-panel">
-      <h2
-        className="text-[26px] font-bold leading-tight"
-        style={{ fontFamily: 'var(--font-serif-sc), serif' }}
-      >
-        {authMode === 'login' ? '欢迎回来。' : '创建你的雷达。'}
+    <div>
+      <h2 className="text-center text-[23px] font-bold tracking-[0.03em] text-[#25334a] sm:text-[24px] xl:text-[32px]">
+        欢迎登录
       </h2>
-      <p className="mt-1.5 text-[13.5px] text-[#5f5b52]">
-        {authMode === 'login' ? '登录后同步你的收藏与提醒。' : '注册后立即开始追踪所有截止时间。'}
+      <p className="mt-2 text-center text-[12.5px] text-[#96a3b6] xl:mt-3 xl:text-[14px]">
+        使用邮箱发送登录链接
       </p>
 
-      <form onSubmit={handleFormSubmit} noValidate className="mt-7">
-        {/* 登录方式：编辑风下划线标签页 */}
-        <div className="flex gap-6 border-b border-[#ece8de]" role="group" aria-label="登录方式">
-          {loginMethods.map((m) => (
-            <button
-              key={m.id}
-              type="button"
-              aria-pressed={loginMethod === m.id}
-              onClick={() => {
-                setLoginMethod(m.id)
-                clearMessage()
-              }}
-              className={cn(
-                'relative -mb-px flex h-10 cursor-pointer items-center border-b-2 text-[13.5px] font-medium transition-colors duration-200 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#002fa7]/40',
-                loginMethod === m.id
-                  ? 'border-[#002fa7] text-[#002fa7]'
-                  : 'border-transparent text-[#7d786d] hover:text-[#1a1a17]',
-              )}
-            >
-              {m.label}
-            </button>
-          ))}
+      <form onSubmit={handleSubmit} noValidate className="mt-6 xl:mt-9">
+        <div className="relative">
+          <span
+            aria-hidden="true"
+            className="pointer-events-none absolute left-4 top-1/2 -translate-y-1/2 text-[#a6b3c5]"
+          >
+            <EnvelopeIcon className="size-4 xl:size-[18px]" />
+          </span>
+          <input
+            ref={inputRef}
+            id="account"
+            name="account"
+            type="email"
+            autoComplete="email"
+            inputMode="email"
+            placeholder="name@example.com"
+            value={email}
+            disabled={sending}
+            aria-invalid={status === 'error'}
+            aria-describedby={message ? 'login-message' : undefined}
+            onChange={(event) => {
+              setEmail(event.target.value)
+              if (status === 'error') {
+                setStatus('idle')
+                setMessage('')
+              }
+            }}
+            className="h-[46px] w-full rounded-xl border border-[#e3eaf5] bg-[#fbfcff] pl-11 pr-4 text-[13.5px] text-[#22314a] outline-none transition-all duration-200 placeholder:text-[#a6b3c5] hover:border-[#cdd9ec] focus:border-[#7aa2f7] focus:bg-white focus:ring-4 focus:ring-[#3b6cf5]/10 disabled:opacity-60 xl:h-[58px] xl:rounded-[14px] xl:pl-[52px] xl:pr-5 xl:text-[15px]"
+          />
         </div>
 
-        <div className="mt-5 space-y-4">
-          {/* 账号字段 */}
-          <div>
-            <label htmlFor="account" className="mb-1.5 block text-[13px] font-medium text-[#5f5b52]">
-              {method.accountLabel}
-            </label>
-            <div className="relative">
-              <span
-                className="pointer-events-none absolute left-3.5 top-1/2 -translate-y-1/2 text-[#a09a8c]"
-                aria-hidden="true"
-              >
-                <AccountIcon size={16} />
-              </span>
-              <Input
-                id="account"
-                name="account"
-                type="email"
-                autoComplete="email"
-                placeholder={method.accountPlaceholder}
-                value={account}
-                disabled={sending}
-                aria-invalid={status === 'error'}
-                aria-describedby={message ? 'login-message' : undefined}
-                onChange={(event) => {
-                  setAccount(event.target.value)
-                  clearMessage()
-                }}
-                className={cn(fieldClass, 'pl-10')}
-              />
-            </div>
-          </div>
-
-          {/* 密码字段（密码 / 邮箱两种方式） */}
-          {loginMethod !== 'code' && (
-            <div>
-              <label htmlFor="password" className="mb-1.5 block text-[13px] font-medium text-[#5f5b52]">
-                密码
-              </label>
-              <div className="relative">
-                <span
-                  className="pointer-events-none absolute left-3.5 top-1/2 -translate-y-1/2 text-[#a09a8c]"
-                  aria-hidden="true"
-                >
-                  <Lock size={16} />
-                </span>
-                <Input
-                  id="password"
-                  name="password"
-                  type="password"
-                  autoComplete={authMode === 'login' ? 'current-password' : 'new-password'}
-                  placeholder={authMode === 'login' ? '请输入密码' : '至少 6 位'}
-                  value={password}
-                  disabled={sending}
-                  onChange={(event) => {
-                    setPassword(event.target.value)
-                    clearMessage()
-                  }}
-                  className={cn(fieldClass, 'pl-10')}
-                />
-              </div>
-            </div>
-          )}
-
-          {/* 验证码字段（验证码方式） */}
-          {loginMethod === 'code' && (
-            <div>
-              <label htmlFor="code" className="mb-1.5 block text-[13px] font-medium text-[#5f5b52]">
-                验证码
-              </label>
-              <div className="relative">
-                <span
-                  className="pointer-events-none absolute left-3.5 top-1/2 -translate-y-1/2 text-[#a09a8c]"
-                  aria-hidden="true"
-                >
-                  <ShieldCheck size={16} />
-                </span>
-                <Input
-                  id="code"
-                  name="code"
-                  type="text"
-                  inputMode="numeric"
-                  autoComplete="one-time-code"
-                  placeholder="6 位数字"
-                  value={code}
-                  disabled={sending}
-                  maxLength={6}
-                  onChange={(event) => {
-                    setCode(event.target.value)
-                    clearMessage()
-                  }}
-                  className={cn(fieldClass, 'pl-10 pr-28')}
-                />
-                <button
-                  type="button"
-                  onClick={handleSendCode}
-                  disabled={codeCountdown > 0 || sending}
-                  className="absolute right-1.5 top-1/2 flex h-10 -translate-y-1/2 cursor-pointer items-center rounded-lg bg-[#002fa7]/8 px-3 text-[13px] font-medium text-[#002fa7] transition-colors duration-200 hover:bg-[#002fa7]/15 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#002fa7]/40 disabled:cursor-not-allowed disabled:opacity-50"
-                >
-                  {codeCountdown > 0 ? `${codeCountdown}s 后重发` : '获取验证码'}
-                </button>
-              </div>
-            </div>
-          )}
-        </div>
-
-        {/* 反馈信息：就近展示，点名问题与恢复方式 */}
         {message && (
           <p
             id="login-message"
-            role="status"
-            aria-live="polite"
-            className="mt-4 flex items-start gap-1.5 text-[13px] leading-relaxed text-[#b42318]"
+            role="alert"
+            className="mt-3 flex items-start gap-1.5 text-[11.5px] leading-5 text-[#d2493f]"
           >
-            <AlertCircle size={15} className="mt-0.5 shrink-0" aria-hidden="true" />
+            <AlertCircle size={14} className="mt-0.5 shrink-0" aria-hidden="true" />
             {message}
           </p>
         )}
 
-        <Button
+        <button
           type="submit"
           disabled={sending}
-          className="mt-6 h-12 w-full cursor-pointer gap-2 rounded-xl bg-[#002fa7] text-[15px] font-semibold text-white transition-colors duration-200 hover:bg-[#00267f]"
+          className="mt-4 flex h-[46px] w-full cursor-pointer items-center justify-center gap-2 rounded-full bg-[linear-gradient(100deg,#4f82fb_0%,#3b6cf5_52%,#2f57ea_100%)] text-[14px] font-semibold tracking-[0.02em] text-white shadow-[0_14px_28px_-12px_rgba(59,108,245,0.75)] transition-all duration-200 hover:brightness-[1.04] hover:shadow-[0_16px_32px_-12px_rgba(59,108,245,0.85)] active:translate-y-px disabled:cursor-not-allowed disabled:opacity-70 xl:mt-6 xl:h-[58px] xl:text-[15.5px]"
         >
           {sending ? (
             <>
-              <Loader2 size={17} className="lp-spin" aria-hidden="true" />
-              处理中…
+              <Loader2 size={16} className="lgc-spin" aria-hidden="true" />
+              发送中…
             </>
           ) : (
             <>
-              {authMode === 'login' ? '登录' : '创建账号'}
-              <ArrowRight size={17} aria-hidden="true" />
+              发送登录链接
+              <ArrowRight size={16} strokeWidth={2.2} aria-hidden="true" />
             </>
           )}
-        </Button>
-      </form>
-
-      {/* 登录 / 注册切换 */}
-      <p className="mt-5 text-[13.5px] text-[#5f5b52]">
-        {authMode === 'login' ? '还没有账号？' : '已有账号？'}
-        <button
-          type="button"
-          onClick={() => {
-            setAuthMode(authMode === 'login' ? 'register' : 'login')
-            clearMessage()
-          }}
-          className="ml-1 cursor-pointer font-semibold text-[#002fa7] underline-offset-4 transition-colors duration-200 hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#002fa7]/40"
-        >
-          {authMode === 'login' ? '立即注册' : '直接登录'}
         </button>
-      </p>
-
-      <p className="mt-4 border-t border-[#ece8de] pt-4 text-[11.5px] leading-[1.7] text-[#7d786d]">
-        继续即表示你同意《服务条款》与《隐私政策》。我们只把你的信息用于登录和截止提醒。
-      </p>
+      </form>
     </div>
+  )
+}
+
+const socials = [
+  { id: 'school', label: '邮箱' },
+  { id: 'wecom', label: '企业微信' },
+  { id: 'wechat', label: '微信' },
+] as const
+
+type SocialId = (typeof socials)[number]['id']
+
+function SocialLogin() {
+  const [notice, setNotice] = useState('')
+
+  function handleClick(id: SocialId) {
+    if (id === 'school') {
+      setNotice('请在上方填写邮箱，我们会把登录链接发到你的邮箱。')
+      document.getElementById('account')?.focus()
+      return
+    }
+    setNotice(id === 'wecom' ? '企业微信登录暂未开通，请先使用邮箱登录。' : '微信登录暂未开通，请先使用邮箱登录。')
+  }
+
+  return (
+    <>
+      <div className="mt-4 grid grid-cols-3 gap-2 xl:mt-6">
+        {socials.map(({ id, label }) => (
+          <button
+            key={id}
+            type="button"
+            onClick={() => handleClick(id)}
+            className="group flex cursor-pointer flex-col items-center gap-2 focus-visible:outline-none"
+          >
+            <span className="flex size-12 items-center justify-center rounded-full border border-[#e6edf9] bg-white shadow-[0_8px_18px_-12px_rgba(75,112,180,0.55)] transition-all duration-200 group-hover:-translate-y-0.5 group-hover:border-[#d3e0f5] group-hover:shadow-[0_12px_22px_-12px_rgba(75,112,180,0.6)] group-focus-visible:ring-2 group-focus-visible:ring-[#3b6cf5]/40 xl:size-[58px]">
+              {id === 'school' && <EnvelopeIcon className="size-5 text-[#3c5d7d] xl:size-[23px]" />}
+              {id === 'wecom' && <WeComMark />}
+              {id === 'wechat' && <WeChatMark />}
+            </span>
+            <span className="text-[10.5px] text-[#6d7d93] xl:mt-0.5 xl:text-[12px]">{label}</span>
+          </button>
+        ))}
+      </div>
+
+      <p
+        aria-live="polite"
+        className={cn(
+          'mt-3 text-center text-[10.5px] leading-4 text-[#97a4b7] transition-opacity duration-200',
+          notice ? 'opacity-100' : 'pointer-events-none h-0 overflow-hidden opacity-0',
+        )}
+      >
+        {notice}
+      </p>
+    </>
+  )
+}
+
+/* 企业微信标识（示意绘制） */
+function WeComMark() {
+  return (
+    <svg viewBox="0 0 24 24" className="size-[21px] xl:size-[24px]" aria-hidden="true">
+      <path
+        d="M12 3.2c4.9 0 8.8 3.1 8.8 7 0 2.2-1.3 4.2-3.4 5.5l.8 3-3-1.4c-1 .2-2.1.3-3.2.3-4.9 0-8.8-3.1-8.8-7s3.9-7.4 8.8-7.4Z"
+        fill="#2f7cf6"
+      />
+      <path
+        d="M13.6 13.2c3.4 0 6.1 2.1 6.1 4.7 0 1.5-.9 2.8-2.3 3.7l.5 2-2-1c-.7.1-1.5.2-2.3.2-3.4 0-6.1-2.1-6.1-4.7"
+        fill="#4ac7b7"
+      />
+      <circle cx="9.2" cy="9.6" r="1.2" fill="#ffffff" />
+      <circle cx="14.8" cy="9.6" r="1.2" fill="#ffffff" />
+      <circle cx="11.8" cy="16.4" r="1" fill="#ffffff" />
+      <circle cx="15.6" cy="16.4" r="1" fill="#ffffff" />
+    </svg>
+  )
+}
+
+/* 微信标识 */
+function WeChatMark() {
+  return (
+    <svg viewBox="0 0 24 24" className="size-[22px] xl:size-[25px]" aria-hidden="true">
+      <path
+        d="M8.69 3.2C4.44 3.2 1 6.15 1 9.78c0 1.98 1.05 3.76 2.69 4.97.16.12.23.32.19.52l-.35 1.32c-.02.06-.04.13-.04.19 0 .15.12.26.26.26a.3.3 0 0 0 .15-.05l1.7-1a.78.78 0 0 1 .64-.08c.82.24 1.69.36 2.54.36.24 0 .49-.02.72-.05-.76-2.3.14-4.45 1.73-5.77 1.52-1.26 3.47-1.77 5.24-1.64-.52-3.2-3.76-5.68-7.7-5.68Zm-2.6 3.4c.58 0 1.04.47 1.04 1.05a1.05 1.05 0 0 1-1.04 1.06 1.05 1.05 0 0 1-1.04-1.06c0-.58.47-1.05 1.04-1.05Zm5.2 0c.58 0 1.04.47 1.04 1.05a1.05 1.05 0 0 1-1.04 1.06 1.05 1.05 0 0 1-1.04-1.06c0-.58.47-1.05 1.04-1.05Zm3.35 3.4c-3.04 0-5.51 2.06-5.51 4.6 0 2.53 2.47 4.59 5.51 4.59.65 0 1.29-.1 1.88-.29a.57.57 0 0 1 .48.07l1.26.74a.22.22 0 0 0 .11.03.2.2 0 0 0 .19-.2c0-.04-.02-.09-.03-.14l-.26-.98a.39.39 0 0 1 .14-.44c1.21-.89 1.98-2.21 1.98-3.75 0-2.54-2.47-4.6-5.51-4.6Zm-1.92 2.44c.42 0 .77.35.77.78 0 .43-.35.78-.77.78a.78.78 0 0 1-.77-.78c0-.43.34-.78.77-.78Zm3.84 0c.43 0 .77.35.77.78 0 .43-.34.78-.77.78a.78.78 0 0 1-.77-.78c0-.43.34-.78.77-.78Z"
+        fill="#07c160"
+      />
+    </svg>
   )
 }

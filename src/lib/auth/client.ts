@@ -59,11 +59,18 @@ export async function signUpWithPassword(
   return { needsEmailConfirm: !data.session }
 }
 
-/** 发送邮箱验证码（createUser 为 true 时允许顺带注册） */
-export async function sendEmailCode(email: string, createUser = false): Promise<void> {
+/** 发送邮箱登录链接（邮件同时包含验证码；createUser 为 true 时允许顺带注册） */
+export async function sendEmailCode(
+  email: string,
+  createUser = false,
+  emailRedirectTo?: string,
+): Promise<void> {
   const { error } = await getClient().auth.signInWithOtp({
     email,
-    options: { shouldCreateUser: createUser },
+    options: {
+      shouldCreateUser: createUser,
+      ...(emailRedirectTo ? { emailRedirectTo } : {}),
+    },
   })
   if (error) throw new AuthError(mapAuthError(error))
 }
