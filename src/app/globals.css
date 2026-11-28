@@ -145,6 +145,7 @@
   --color-hero-secondary: var(--hero-secondary);
   --color-hero-muted: var(--hero-muted);
   --font-hero: var(--font-manrope);
+  --font-landing: var(--font-noto-sans-sc), "PingFang SC", "Microsoft YaHei", sans-serif;
 }
 
 @layer components {
